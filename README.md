@@ -2,7 +2,21 @@
 
 > **一个伟大的小说编辑器，跨时代的 AI 辅助编辑**
 
+<p align="center">
+  <img src="assets/screenshots/dashboard.png" width="80%" alt="仪表盘 - 玻璃态深色主题">
+</p>
+
 NovelAI Writer 是一款面向中文网文作者的长篇小说 AI 辅助创作工具。它把叙事学理论（POV 信息边界、伏笔生命周期、事件因果链、MBTI 性格模型）工程化到数据结构和规则引擎里，用"规则筑底 + LLM 做模糊判断 + LLM 做创意优化"的三层架构，为长篇创作提供从构思到成稿的全链路支持。
+
+## 截图预览
+
+| AI 编辑器（流式写章） | 知识图谱（统一异构图） |
+|:---:|:---:|
+| ![编辑器](assets/screenshots/editor.png) | ![知识图谱](assets/screenshots/knowledge_graph.png) |
+
+| 人物关系网 | 新建小说向导 |
+|:---:|:---:|
+| ![关系网](assets/screenshots/network.png) | ![向导](assets/screenshots/new-novel.png) |
 
 ## 核心亮点
 

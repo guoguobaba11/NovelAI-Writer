@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+ <meta charset="UTF-8" />
+ <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+ <title>NovelAI Writer · 作者工作台</title>
+ <!-- 不依赖外网字体：纯系统字体 fallback（Inter / PingFang SC / 微软雅黑 / Songti SC / Consolas 等），
+ 避免 webview 启动时因 fonts.googleapis.com 阻塞而黑屏。-->
+ <!-- B-新190: 加 ?v= 时间戳强破刷新, 防 PyWebView cache 旧 CSS 看不到新 hidden 修 -->
+ <link rel="stylesheet" href="/static/style.css?v=4.0.0" />
+ <!-- echarts 本地打包，不走 CDN（防离线/网慢时图表空白）。vis-network 已移除（死依赖，7 个可视化全用 echarts） -->
+ <script src="/static/echarts.min.js"></script>
+</head>
+<body>
+ <!-- ===== 顶部状态栏 ===== -->
+ <header id="topbar">
+ <div class="brand">
+ <span class="brand-name" id="project-title">加载中…</span>
+ <span class="meta" id="project-meta"></span>
+ </div>
+ <div class="kpis">
+ <!-- B-优1: 简化为 2 个: 字数 (常看) + 健康度 (跳 pipeline). 章节/已写在 dashboard 已显示 -->
+ <div class="kpi" title="全文字数" id="kpi-words-wrap">
+ <div class="kpi-label">字数</div>
+ <div class="kpi-value" id="kpi-words">0</div>
+ </div>
+ <div class="kpi status clickable" id="kpi-status" title="点击跳到修改流水线">
+ <div class="kpi-label">健康度</div>
+ <div class="kpi-value">● 检测中</div>
+ </div>
+ </div>
+ <div class="actions">
+ <!-- B-优3: AI 状态 pill: 圆点 + 文字 + 颜色随状态 (灰/绿/红) -->
+ <span class="ai-pill" id="ai-status-badge" title="AI 状态">
+ <span class="ai-pill-dot"></span>
+ <span class="ai-pill-text">检测中</span>
+ </span>
+ <button class="btn-icon" id="btn-refresh" title="刷新数据 (R)">⟳</button>
+ <!-- B-新157: 工具菜单收纳所有功能入口, 减少 sidebar 25 项负担 -->
+ <div class="topbar-menu-wrap" id="tools-menu-wrap">
+ <button class="btn-icon" id="btn-tools" title="工具 (T)">工具</button>
+ <div class="topbar-menu" id="tools-menu" style="display:none">
+ <!-- 抽屉式重组：5 个可折叠分组，写作优先视角归类 -->
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"> 写作</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="import">导入 MD 手稿</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="chapters">章节 / 卷管理</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="characters">人物档案</button>
+ </div>
+ </div>
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"> 一致性扫描</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="scan">扫描问题</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="threadscan">伏笔深度</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="logicscan">逻辑链深度</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="stylescan">文风漂移</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="driftscan">性格漂移</button>
+ </div>
+ </div>
+ <div class="menu-drawer">
+ <div class="menu-drawer-head"> 洞察可视化</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="knowledge_graph">知识图谱</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="timeline">时间线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="chain">事件因果链</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="rhythm">节奏曲线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="matrix">MBTI 矩阵</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="arcs">成长线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="relcurve">亲密度曲线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="network">关系网</button>
+ </div>
+ </div>
+ <div class="menu-drawer">
+ <div class="menu-drawer-head"> 标注 · 结构</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="mbti">MBTI 标注</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="events">事件 / 伏笔 / 事实</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="structure">叙事结构</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="vocab-show">用词一致性</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="review-show">审稿进度</button>
+ </div>
+ </div>
+ <div class="menu-drawer">
+ <div class="menu-drawer-head"> AI · 迁移</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="ai-extract">AI 自动抽取</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="opt-all">AI 修改建议</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="pipeline"> 修改流水线</button>
+ <button class="topbar-menu-item" data-action="migrate-show"> 跨设备迁移</button>
+ </div>
+ </div>
+ </div>
+ </div>
+ <button class="btn-icon" id="btn-theme" title="切换主题">主题</button>
+ <button class="btn-icon" id="btn-focus" title="专注写作模式 (F)">专注</button>
+ <button class="btn-icon" id="btn-help" title="帮助">?</button>
+ </div>
+ </header>
+
+ <!-- ===== 主体三栏 ===== -->
+ <main>
+ <!-- 左侧：工作流导航 -->
+ <aside id="sidebar">
+ <div class="sidebar-header">
+ <div class="sidebar-title"> 工作流</div>
+ <div class="sidebar-sub">按使用频率分组</div>
+ </div>
+ <nav class="wf-nav">
+ <!-- ===== 仪表盘（始终在最上） ===== -->
+ <div class="wf-group" data-group="dashboard">
+ <button class="wf-item wf-active" data-action="goto" data-target="dashboard">
+ <span class="wf-ico"></span>
+ <span class="wf-label">仪表盘</span>
+ <span class="wf-tag" id="wf-tag-dashboard"></span>
+ </button>
+ <!-- B-优9: 仪表盘跟 5 常用之间细分隔线 -->
+ <div class="wf-divider"></div>
+ </div>
+
+ <!-- ===== 常用：每天都会用的 5 项 ===== -->
+ <div class="wf-group" data-group="freq">
+ <button class="wf-item wf-pinned" data-action="goto" data-target="editor">
+ <span class="wf-ico"></span>
+ <span class="wf-label">AI 编辑器</span>
+ <span class="wf-shortcut">E</span>
+ </button>
+ <button class="wf-item wf-pinned" data-action="goto" data-target="scan">
+ <span class="wf-ico"></span>
+ <span class="wf-label">扫描问题</span>
+ <span class="wf-shortcut">S</span>
+ </button>
+ <button class="wf-item wf-pinned" data-action="goto" data-target="opt-all">
+ <span class="wf-ico"></span>
+ <span class="wf-label">AI 修改建议</span>
+ <span class="wf-shortcut">O</span>
+ </button>
+ <button class="wf-item wf-pinned" data-action="goto" data-target="pipeline">
+ <span class="wf-ico"></span>
+ <span class="wf-label">修改流水线</span>
+ </button>
+ <button class="wf-item wf-pinned" data-action="goto" data-target="import">
+ <span class="wf-ico"></span>
+ <span class="wf-label">导入 MD 手稿</span>
+ </button>
+ </div>
+
+ </nav>
+ </aside>
+
+ <!-- 中央：主区（仪表盘 / 各视图） -->
+ <section id="main">
+ <!-- 仪表盘主页 -->
+ <div class="view view-active" id="view-dashboard">
+ <div id="dashboard-content" class="dashboard"></div>
+ </div>
+
+ <!-- 通用视图（各功能模块） -->
+ <div class="view hidden" id="view-editor">
+ <div class="editor-layout">
+ <!-- 顶条：极简三区——导航 | 核心操作 | 状态+视图 -->
+ <div class="editor-topbar">
+ <!-- 左：返回仪表盘 + 章节导航 -->
+ <button class="btn-icon" id="ed-back" title="返回仪表盘" style="font-size:16px">‹</button>
+ <button class="ed-toggle-right" id="ed-toggle-left" title="切换左侧栏 (Ctrl+[)">左栏</button>
+ <div class="ed-toolbar-sep"></div>
+ <div class="ed-chapter-nav">
+ <button class="btn small" id="ed-prev" title="上一回 (Alt+←)">←</button>
+ <span id="ed-chapter-label">加载中…</span>
+ <button class="btn small" id="ed-next" title="下一回 (Alt+→)">→</button>
+ </div>
+ <div class="ed-toolbar-sep"></div>
+ <!-- 中：核心写作操作（仅4个主按钮，其余收入更多） -->
+ <div class="ed-toolbar-tools">
+ <div class="ed-tb-group ed-tb-primary">
+ <button class="btn" id="ed-btn-regenerate-this" title="让 AI 重新生成本章正文">AI 重生</button>
+ <button class="btn primary" id="ed-btn-ai-edit" title="AI 改写（Ctrl+Enter 发送）">AI 改</button>
+ <button class="btn" id="ed-btn-save" title="保存 (Ctrl+S)">保存</button>
+ </div>
+ <div class="ed-tb-group ed-tb-diagnose">
+ <button class="btn" id="ed-btn-analyze" title="扫描本章一致性（秒级）">扫描</button>
+ <button class="btn" id="ed-btn-brief" title="今日简报">简报</button>
+ </div>
+ <!-- 次要功能收入「更多」下拉 -->
+ <div class="ed-tb-group ed-tb-file">
+ <div class="ed-tools-dropdown" id="ed-more-wrap" style="position:relative;display:inline-block">
+ <button class="btn" id="ed-btn-more" title="更多操作">更多</button>
+ <div class="ed-tools-menu" id="ed-more-menu" style="display:none;position:absolute;left:0;top:36px;background:var(--bg-glass-strong);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:4px;min-width:180px;box-shadow:var(--shadow-3);z-index:1000">
+ <div class="ed-more-section">编辑</div>
+ <button class="ed-tools-menu-item" data-action="undo">撤销 (Ctrl+Z)</button>
+ <button class="ed-tools-menu-item" data-action="redo">重做 (Ctrl+Shift+Z)</button>
+ <button class="ed-tools-menu-item" data-action="find">查找替换 (Ctrl+F)</button>
+ <button class="ed-tools-menu-item" data-action="clear">清空 AI 输出</button>
+ <div class="ed-more-section">版本</div>
+ <button class="ed-tools-menu-item" data-action="history">历史版本</button>
+ <button class="ed-tools-menu-item" data-action="snapshot">命名存档</button>
+ <div class="ed-more-section">字号 / 导出</div>
+ <button class="ed-tools-menu-item" data-action="font-down">字号 -</button>
+ <button class="ed-tools-menu-item" data-action="font-up">字号 +</button>
+ <button class="ed-tools-menu-item" data-action="set-target">设本章目标</button>
+ <button class="ed-tools-menu-item" data-action="export-docx">导出 Word (.docx)</button>
+ <button class="ed-tools-menu-item" data-action="export-md">导出 Markdown (.md)</button>
+ </div>
+ </div>
+ </div>
+ </div>
+ <!-- 右：状态 + 视图 -->
+ <div class="ed-tb-group ed-tb-view">
+ <span id="ed-meta" class="ed-chapter-meta"></span>
+ <span class="ed-tb-status" id="ed-tb-status" title="当前状态">
+ <span class="status-dot"></span>
+ <span class="status-text">就绪</span>
+ </span>
+ <button class="ed-toggle-right active" id="ed-toggle-right" title="切换右侧栏 (Ctrl+])">右栏</button>
+ <button class="ed-toggle-right" id="ed-toggle-focus" title="沉浸模式 (Ctrl+\)">沉浸</button>
+ </div>
+ <!-- 隐藏的原图标按钮（保留id，JS绑定用，不可见） -->
+ <div style="display:none">
+ <div class="ed-font-control" title="字号"><button class="btn-icon" id="ed-font-down" title="字号 -">A-</button><span id="ed-font-size">18</span><button class="btn-icon" id="ed-font-up" title="字号 +">A+</button></div>
+ <div class="ed-target-mini" id="ed-target-mini" title="点击设本章目标"><span></span><span class="ed-target-mini-bar"><span id="ed-target-mini-fill" class="ed-target-mini-fill" style="width:0%"></span></span><span id="ed-target-mini-text">未设</span></div>
+ <button class="btn-icon" id="ed-btn-undo" disabled title="撤销">↶</button>
+ <button class="btn-icon" id="ed-btn-redo" disabled title="重做">↷</button>
+ <button class="btn-icon" id="ed-btn-find" title="查找">查找</button>
+ <button class="btn-icon" id="ed-btn-clear" title="清空">清空</button>
+ <button class="btn-icon" id="btn-version-history" disabled title="历史">历史</button>
+ <button class="btn-icon" id="ed-btn-snapshot" title="存档">存档</button>
+ <button class="btn-icon" id="ed-btn-export" title="导出">导出</button>
+ </div>
+ </div>
+
+ <!-- 左: 图标条 (默认) + 章导航 + 本章诊断 (展开时) -->
+ <aside class="editor-left" id="ed-left">
+ <div class="ed-left-rail" title="左栏工具">
+ <button class="ed-rail-btn active" id="ed-rail-chapters" title="章节列表" data-rail="chapters">章</button>
+ <button class="ed-rail-btn" id="ed-rail-diagnostics" title="本章诊断" data-rail="diagnostics">诊</button>
+ <button class="ed-rail-btn" id="ed-rail-outline" title="本章要点" data-rail="outline">要</button>
+ </div>
+ <div class="ed-left-panel">
+ <div class="ed-section" data-pane="chapters">
+ <div class="ed-chapter-nav">
+ <button class="btn small" id="ed-prev-2" title="上一回">←</button>
+ <span class="ed-chapter-label">第 <span id="ed-cur-chap">-</span> 回</span>
+ <button class="btn small" id="ed-next-2" title="下一回">→</button>
+ </div>
+ <div id="ed-chapter-list" class="ed-chapter-list"></div>
+ </div>
+ <div class="ed-section ed-diagnostics" data-pane="diagnostics" style="display:none">
+ <div class="ed-section-title">
+ <span> 本章诊断</span>
+ <button class="btn-icon" id="ed-btn-analyze-mini" title="扫描本章" style="font-size:11px">扫描</button>
+ </div>
+ <div id="ed-issues" class="ed-issues"><p class="placeholder" style="font-size:11px">点 运行</p></div>
+ </div>
+ <div class="ed-section" data-pane="outline" style="display:none">
+ <div class="ed-section-title">
+ <span> 本章要点</span>
+ <span id="ed-outline-coverage" class="ed-outline-coverage"></span>
+ </div>
+ <div id="ed-outline-content-left" class="ed-outline-content">
+ <p class="placeholder" style="font-size:11px">加载中…</p>
+ </div>
+ </div>
+ </div>
+ </aside>
+
+ <!-- 中: 正文 (主区, 默认 max-width 880px, 字号可调) -->
+ <main class="editor-center">
+ <div class="editor-main" id="ed-main">
+ <div class="editor-page">
+ <textarea id="ed-text" placeholder="开始写第 1 回 …" spellcheck="false"></textarea>
+ </div>
+ </div>
+ <div class="editor-statusbar">
+ <span id="ed-words">0 字</span>
+ <span id="ed-words-delta"></span>
+ <span id="ed-sel-count" class="ed-sel-count"></span>
+ <span id="ed-status">● 已保存</span>
+ </div>
+ </main>
+
+ <!-- 右: tabs(要点/批注/AI) + AI 输入面板 (含快捷 chip) -->
+ <aside class="editor-right">
+ <div class="ed-right-tabs" role="tablist">
+ <button class="ed-tab active" data-tab="outline" id="ed-tab-outline"> 要点</button>
+ <button class="ed-tab" data-tab="comments" id="ed-tab-comments"> 批注 <span id="ed-comment-count" class="ed-tab-count">0</span></button>
+ <button class="ed-tab" data-tab="ai" id="ed-tab-ai"> AI</button>
+ </div>
+ <div class="ed-right-body">
+ <div class="ed-right-pane active" data-pane="outline">
+ <div class="ed-section">
+ <div class="ed-outline-content" id="ed-outline-content">
+ <p class="placeholder" style="font-size:11px">加载中…</p>
+ </div>
+ </div>
+ </div>
+ <div class="ed-right-pane" data-pane="comments">
+ <div class="ed-section">
+ <div class="ed-section-title">
+ <span style="font-size:10px;color:var(--fg-dim);font-weight:normal">Ctrl+Shift+C 加批注</span>
+ </div>
+ <div id="ed-comments-list" class="ed-comments-list">
+ <p class="placeholder" style="font-size:11px;color:var(--fg-dim)">还没批注。<br>选段文本后右上角浮" 加批注"按钮。</p>
+ </div>
+ </div>
+ </div>
+ <div class="ed-right-pane" data-pane="ai">
+ <div class="ed-section" style="flex:1;display:flex;flex-direction:column;padding-bottom:0">
+ <div class="ed-section-title"> AI 输出 (按段落采纳)</div>
+ <div id="ed-ai-stream" class="ed-stream"></div>
+ <div class="ed-ai-actions" id="ed-ai-actions" style="display:none;margin-top:8px">
+ <button class="btn small" id="ed-ai-accept-all">✓ 全部采纳</button>
+ <button class="btn small" id="ed-ai-reject-all">✕ 全部拒绝</button>
+ <button class="btn small" id="ed-ai-retry" title="用同一指令重新生成（温度随机，结果会不同）"> 重试</button>
+ <button class="btn small" id="ed-ai-cancel" style="display:none;color:var(--danger)"> 取消</button>
+ </div>
+ </div>
+ </div>
+ </div>
+ <!-- AI 输入面板 (合并原 .editor-bottom 的所有内容) -->
+ <div class="ed-ai-panel">
+ <!-- AI 可观测性统计条：常驻显示今日 token/调用/延迟/接受率，点击展开详情 -->
+ <div id="ed-ai-statsbar" class="ed-ai-statsbar" title="点击展开 AI 调用详情">
+ <span class="asb-item"> <strong id="asb-calls">0</strong><span class="asb-unit">次</span></span>
+ <span class="asb-sep">·</span>
+ <span class="asb-item"> <strong id="asb-tokens">0</strong></span>
+ <span class="asb-sep">·</span>
+ <span class="asb-item"> <strong id="asb-latency">—</strong><span class="asb-unit">ms</span></span>
+ <span class="asb-sep">·</span>
+ <span class="asb-item">✓ <strong id="asb-accept-rate">—</strong></span>
+ <span class="asb-expand" id="asb-toggle">▾</span>
+ </div>
+ <div id="ed-ai-statsbar-detail" class="ed-ai-statsbar-detail hidden">
+ <div class="asbd-section">
+ <div class="asbd-title">
+ <span> AI 调用详情</span>
+ <button class="btn small" id="asb-reset" title="清空前端接受率统计（不影响后端 token 日志）">重置接受率</button>
+ </div>
+ <div id="asbd-endpoints" class="asbd-endpoints"></div>
+ </div>
+ <div class="asbd-section">
+ <div class="asbd-subtitle">最近 10 次调用</div>
+ <div id="asbd-recent" class="asbd-recent"></div>
+ </div>
+ </div>
+ <div class="ed-quick-commands">
+ <span class="ed-quick-label">快捷：</span>
+ <button class="ed-chip" id="ed-chip-write" title="正文为空时让 AI 从大纲撰写全文；有正文时同润色">AI 撰写</button>
+ <button class="ed-chip" data-cmd="润色本章的对话，让语言更自然有性格"> 润色</button>
+ <button class="ed-chip" data-cmd="检查本章的逻辑一致性和人物性格漂移"> 一致</button>
+ <button class="ed-chip" data-cmd="将本章改写得更紧凑，删去冗余描写"> 紧凑</button>
+ <button class="ed-chip" data-cmd="扩写本章主角的内心独白，增加心理深度"> 心理</button>
+ <button class="ed-chip" data-cmd="把本章翻成鲁迅式的冷峻文风"> 风格</button>
+ <button class="ed-chip ed-plan-toggle" id="ed-plan-toggle" title="开启计划模式：AI 先列出修改方案，你批准后再逐项执行"> 计划模式</button>
+ </div>
+ <div class="ed-input-row">
+ <input type="text" id="ed-input" placeholder="指挥 AI：把第三段对话改得更口语化…">
+ <button class="btn primary" id="ed-send">发送 </button>
+ </div>
+ </div>
+ </aside>
+
+ <!-- 底栏: 已合并到右栏 .ed-ai-panel, 留个空 footer 占位 -->
+ <footer class="editor-bottom"></footer>
+ </div>
+ </div>
+ <div class="view hidden" id="view-tool">
+ <div class="tool-header" id="tool-header"></div>
+ <div class="tool-body" id="tool-body"></div>
+ </div>
+ </section>
+
+ <!-- 右侧：详情 -->
+ <aside id="detail">
+ <div class="detail-header">
+ <span class="detail-label"> 详情</span>
+ <!-- B-新163: 删掉死按钮 btn-hard-check (display:none 写死, 没人改) -->
+ </div>
+ <div id="detail-body">
+ <p class="placeholder"> 从中央选一个项目查看详情</p>
+ </div>
+ </aside>
+ </main>
+
+ <!-- ===== 拖拽导入覆盖层（拖 .md 文件到窗口时显示，顶部小条不挡内容） ===== -->
+ <div id="drop-overlay" class="drop-overlay hidden">
+ <div class="drop-box" id="drop-box">
+ <div class="drop-icon"></div>
+ <div class="drop-text">
+ <div class="drop-title">松手导入 Markdown 手稿</div>
+ <div class="drop-sub">支持 .md / .markdown · 可拖到编辑器区域 · 按 ESC 取消</div>
+ </div>
+ <button class="drop-cancel" id="drop-cancel" type="button">取消</button>
+ </div>
+ </div>
+
+ <!-- ===== 导入进度弹窗 ===== -->
+ <div id="import-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-md">
+ <div class="modal-header">
+ <h2> 导入中…</h2>
+ </div>
+ <div class="modal-body" id="import-progress-body">
+ <div class="ip-file">读取中…</div>
+ <div class="ip-bar"><div class="ip-bar-fill" id="ip-bar-fill"></div></div>
+ <div class="ip-status" id="ip-status">准备中…</div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 底部实时日志 ===== -->
+ <footer id="logbar" class="collapsed">
+ <div class="log-header">
+ <span> 实时日志</span>
+ <button class="btn small" id="btn-toggle-log">展开</button>
+ </div>
+ <div id="log-content" class="log">
+ <div class="log-placeholder">暂无日志 · 后台任务会自动写入</div>
+ </div>
+ </footer>
+
+ <!-- ===== Onboarding Modal ===== -->
+ <div id="onboarding-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content">
+ <div class="modal-header">
+ <h2> 欢迎使用 NovelAI Writer</h2>
+ <button class="modal-close" id="onb-close">×</button>
+ </div>
+ <div class="modal-body" id="onb-body">
+ <div class="onb-step onb-active" data-step="1">
+ <div class="onb-emoji"></div>
+ <h3>长篇小说修改工作流</h3>
+ <p>本工具帮你把握<strong>事件链、时间顺序、人物性格、逻辑、信息把控</strong>的一致性，并让 LLM 给出可执行的修改建议。</p>
+ <p>推荐 4 步流程：</p>
+ <ol>
+ <li><strong>导入</strong> 你已有的 MD 手稿</li>
+ <li><strong>建库</strong> 标注主要人物的 MBTI + 关键里程碑</li>
+ <li><strong>扫描</strong> 看全本有哪些问题</li>
+ <li><strong>优化</strong> 让 AI 给出具体修改建议</li>
+ </ol>
+ </div>
+ <div class="onb-step" data-step="2">
+ <div class="onb-emoji"></div>
+ <h3>第 1 步：导入手稿</h3>
+ <p>把你的 <code>.md</code> 文件准备好，按"卷头 / 回头"格式：</p>
+<pre style="background:var(--bg-base);padding:10px;border-radius:6px;font-size:12px;border:1px solid var(--border)">
+# 第一卷 长安惊变
+天宝十四年冬...
+
+## 第一回 雨夜仵作
+（正文...）
+
+## 第二回 琴声旧约
+（正文...）
+
+# 第二卷 暗流涌动
+## 第三回 虎嗅蔷薇
+（正文...）
+</pre>
+ <p>然后点顶部 <strong> 导入</strong> 按钮，或在 CLI 里：</p>
+ <pre style="background:var(--bg-base);padding:10px;border-radius:6px;font-size:12px;border:1px solid var(--border)">novel&gt; import-md 我的初稿.md --title=《书名》</pre>
+ </div>
+ <div class="onb-step" data-step="3">
+ <div class="onb-emoji"></div>
+ <h3>第 2 步：标注 MBTI</h3>
+ <p>给主要 5-8 个人物设置 MBTI（16型人格）。这是后续所有人物维度分析的基础：</p>
+ <pre style="background:var(--bg-base);padding:10px;border-radius:6px;font-size:12px;border:1px solid var(--border)">novel&gt; set-mbti 沈青砚 INTJ
+novel&gt; set-mbti 林婉 INFJ
+novel&gt; set-mbti 李琰 ENTJ</pre>
+ <p>完成后左侧"建库 → MBTI 标注"会显示已标注的人物。</p>
+ </div>
+ <div class="onb-step" data-step="4">
+ <div class="onb-emoji"></div>
+ <h3>第 3 步：跑全本扫描</h3>
+ <p>左侧"扫描"区有 4 个扫描器：</p>
+ <ul>
+ <li><strong>伏笔扫描</strong>：烂尾、超期、提前揭晓</li>
+ <li><strong>逻辑链扫描</strong>：死人复活、因果倒置、地点冲突、信息泄漏</li>
+ <li><strong>文风漂移</strong>：句长、独白、描写密度的章节间差异</li>
+ <li><strong>性格漂移</strong>：人物 MBTI 与实际表现的偏差</li>
+ </ul>
+ <p>不需要 LLM，纯启发式，秒级出结果。</p>
+ </div>
+ <div class="onb-step" data-step="5">
+ <div class="onb-emoji"></div>
+ <h3>第 4 步：AI 给修改建议</h3>
+ <p>左侧"优化"区，让 LLM 基于前面的扫描结果给具体可执行的修改建议：</p>
+ <ul>
+ <li>针对<strong>某个人物</strong>的 MBTI / 弧光优化</li>
+ <li>针对<strong>某对人物</strong>的交会优化</li>
+ <li>一键<strong>全局优化</strong>（扫描全本给综合建议）</li>
+ </ul>
+ <p>每条建议带 priority（high/medium/low）+ 章节范围 + 修改示例。点 ✓ 即视为已应用。</p>
+ <p style="margin-top:16px;color:var(--fg-dim);font-size:11px">注：需要配置 <code>NOVELAI_API_KEY</code> 在 <code>.env</code> 中。</p>
+ </div>
+ </div>
+ <div class="modal-footer">
+ <span id="onb-step-indicator">1 / 5</span>
+ <div>
+ <button class="btn" id="onb-prev">← 上一步</button>
+ <button class="btn primary" id="onb-next">下一步 →</button>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 通用 Modal（命令面板/导入等） ===== -->
+ <div id="cmd-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-sm">
+ <div class="modal-header">
+ <h2 id="cmd-title">执行命令</h2>
+ <button class="modal-close" id="cmd-close">×</button>
+ </div>
+ <div class="modal-body" id="cmd-body"></div>
+ <div class="modal-footer">
+ <button class="btn" id="cmd-cancel">取消</button>
+ <button class="btn primary" id="cmd-ok">确定</button>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 快捷键面板（按 ? 弹出） ===== -->
+ <div id="shortcut-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-lg">
+ <div class="modal-header">
+ <h2> 快捷键</h2>
+ <button class="modal-close" id="sc-close">×</button>
+ </div>
+ <div class="modal-body">
+ <div class="sc-section">
+ <div class="sc-section-title"> 导航</div>
+ <div class="sc-row"><kbd>G</kbd> + <kbd>D</kbd> <span class="sc-desc">仪表盘</span></div>
+ <div class="sc-row"><kbd>G</kbd> + <kbd>E</kbd> <span class="sc-desc">AI 编辑器</span></div>
+ <div class="sc-row"><kbd>G</kbd> + <kbd>S</kbd> <span class="sc-desc">扫描问题</span></div>
+ <div class="sc-row"><kbd>G</kbd> + <kbd>O</kbd> <span class="sc-desc">AI 修改建议</span></div>
+ <div class="sc-row"><kbd>G</kbd> + <kbd>I</kbd> <span class="sc-desc">导入 MD</span></div>
+ <div class="sc-row"><kbd>G</kbd> + <kbd>P</kbd> <span class="sc-desc">修改流水线</span></div>
+ </div>
+ <div class="sc-section">
+ <div class="sc-section-title"> 编辑器</div>
+ <div class="sc-row"><kbd>F</kbd> <span class="sc-desc">专注模式（隐藏所有侧栏）</span></div>
+ <div class="sc-row"><kbd>Ctrl</kbd>+<kbd>.</kbd> <span class="sc-desc">切换深 / 浅主题</span></div>
+ <div class="sc-row"><kbd>Ctrl</kbd>+<kbd>S</kbd> <span class="sc-desc">保存当前章节</span></div>
+ <div class="sc-row"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> <span class="sc-desc">发送 AI 指令</span></div>
+ <div class="sc-row"><kbd>Esc</kbd> <span class="sc-desc">退出专注模式 / 关闭弹窗</span></div>
+ </div>
+ <div class="sc-section">
+ <div class="sc-section-title"> 全局</div>
+ <div class="sc-row"><kbd>?</kbd> <span class="sc-desc">显示 / 隐藏这个面板</span></div>
+ <div class="sc-row"><kbd>Ctrl</kbd>+<kbd>K</kbd> <span class="sc-desc">命令面板（搜索功能）</span></div>
+ </div>
+ <div class="sc-hint">提示：所有快捷键在输入框聚焦时无效，避免误触。</div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 首次启动 5 秒快捷键教学浮层 ===== -->
+ <div id="onboarding-toast" class="onb-toast hidden">
+ <div class="ot-content">
+ <div class="ot-title"> 试试这些快捷键</div>
+ <div class="ot-keys">
+ <div class="ot-row"><kbd>F</kbd><span>专注模式</span></div>
+ <div class="ot-row"><kbd>Ctrl</kbd>+<kbd>.</kbd><span>切换主题</span></div>
+ <div class="ot-row"><kbd>Ctrl</kbd>+<kbd>K</kbd><span>命令面板</span></div>
+ <div class="ot-row"><kbd>G</kbd> <span>+</span> <kbd>E</kbd><span>跳到编辑器</span></div>
+ </div>
+ <div class="ot-hint">按 <kbd>?</kbd> 查看全部</div>
+ </div>
+ </div>
+
+ <!-- ===== 版本历史面板 ===== -->
+ <div id="version-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-xl">
+ <div class="modal-header">
+ <h2> 版本历史</h2>
+ <button class="modal-close" id="version-close">×</button>
+ </div>
+ <div class="modal-body" style="max-height:65vh;overflow-y:auto;">
+ <div style="color:var(--fg-muted);font-size:11.5px;margin-bottom:10px">
+ 每次"接受 AI 改稿"或"保存修改"会自动存一版。最多保留 30 版，超出自动丢弃最早的。
+ </div>
+ <div style="display:flex;gap:6px;margin-bottom:10px">
+ <button class="btn small" id="btn-snapshot-named"> 给当前编辑起名存档</button>
+ <button class="btn small" id="btn-clear-history" style="margin-left:auto;color:var(--danger)"> 清空历史</button>
+ </div>
+ <div id="version-list"></div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 命名存档对话框 ===== -->
+ <div id="snapshot-name-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-sm">
+ <div class="modal-header">
+ <h2> 给当前编辑起个名字</h2>
+ <button class="modal-close" id="sn-close">×</button>
+ </div>
+ <div class="modal-body">
+ <p style="font-size:12.5px;color:var(--fg-muted);margin-bottom:8px">
+ 给重要版本起个名字（"v1 终稿"、"v2 修对话"等），方便以后找回。
+ </p>
+ <div class="form-row">
+ <label>版本名</label>
+ <input type="text" id="sn-input" placeholder="如：v1 终稿 / v2 修对话 / 改好伏笔" maxlength="40" />
+ </div>
+ <div style="margin-top:6px;font-size:11px;color:var(--fg-dim)">
+ 当前字数：<span id="sn-current-words">0</span>
+ </div>
+ </div>
+ <div class="modal-footer">
+ <button class="btn" id="sn-cancel">取消</button>
+ <button class="btn primary" id="sn-ok"> 存档</button>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 版本对比面板 ===== -->
+ <div id="diff-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-xl">
+ <div class="modal-header">
+ <h2> 版本对比</h2>
+ <button class="modal-close" id="diff-close">×</button>
+ </div>
+ <div class="modal-body" id="diff-body" style="max-height:70vh;overflow-y:auto"></div>
+ </div>
+ </div>
+
+ <!-- ===== 跨章节用词一致性 ===== -->
+ <div id="vocab-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-2xl">
+ <div class="modal-header">
+ <h2> 跨章节用词一致性</h2>
+ <button class="modal-close" id="vocab-close">×</button>
+ </div>
+ <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+ <div style="color:var(--fg-muted);font-size:11.5px;margin-bottom:10px;line-height:1.6">
+ 检查两件事：
+ <br>① 每个角色在各章节里用了什么称呼（避免 A 章"孙总" / B 章"老孙" 乱用）
+ <br>② 同一人用不同敬称（"X总 / X老板 / X先生"）出现在不同章节
+ </div>
+ <div id="vocab-summary" style="margin-bottom:12px;display:flex;gap:12px"></div>
+ <div id="vocab-honorifics"></div>
+ <div id="vocab-roles"></div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 批注编辑对话框 ===== -->
+ <div id="comment-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-sm">
+ <div class="modal-header">
+ <h2> 加批注</h2>
+ <button class="modal-close" id="cm-close">×</button>
+ </div>
+ <div class="modal-body">
+ <div style="margin-bottom:8px">
+ <div style="font-size:10.5px;color:var(--fg-dim);margin-bottom:3px">选中的文本</div>
+ <div id="cm-snippet" style="padding:8px 10px;background:color-mix(in srgb, var(--accent) 8%, transparent);border-left:2px solid var(--accent);border-radius:0 4px 4px 0;font-size:12px;color:var(--fg);font-family:var(--font-serif,serif)"></div>
+ </div>
+ <div class="form-row">
+ <label>批注内容</label>
+ <textarea id="cm-body" rows="4" placeholder="如：动机不清，建议补充"和第十回矛盾" style="width:100%;font-family:inherit"></textarea>
+ </div>
+ <div style="margin-top:6px;font-size:10.5px;color:var(--fg-dim)">
+ 选区字符 index：<span id="cm-pos">-</span> · 按 Ctrl+Enter 提交
+ </div>
+ </div>
+ <div class="modal-footer">
+ <button class="btn" id="cm-cancel">取消</button>
+ <button class="btn primary" id="cm-ok"> 提交批注</button>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 跨设备数据迁移 ===== -->
+ <div id="migrate-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-md">
+ <div class="modal-header">
+ <h2> 跨设备数据迁移</h2>
+ <button class="modal-close" id="mg-close">×</button>
+ </div>
+ <div class="modal-body">
+ <p style="font-size:12px;color:var(--fg-muted);margin-bottom:10px;line-height:1.6">
+ 导出 <b>.novelpack</b> 文件（含数据库 + .env），拷到另一台电脑后导入即可恢复全部内容。
+ </p>
+ <div style="display:flex;gap:6px;margin-bottom:14px">
+ <button class="btn primary" id="mg-export" style="flex:1"> 导出 novelpack</button>
+ </div>
+ <div style="border-top:1px solid var(--border-soft, color-mix(in srgb, var(--fg-dim) 12%, transparent));padding-top:12px">
+ <p style="font-size:12px;color:var(--fg-muted);margin-bottom:8px"> 导入 .novelpack（会自动备份当前数据到 data/backups/）</p>
+ <input type="file" id="mg-file" accept=".novelpack,.zip" style="font-size:11.5px;width:100%;padding:6px;background:var(--bg-elevated);color:var(--fg);border:1px solid var(--border-glass);border-radius:4px" />
+ <button class="btn" id="mg-import" style="margin-top:8px;width:100%"> 导入并恢复</button>
+ </div>
+ <div id="mg-msg" style="margin-top:10px;font-size:11.5px;min-height:14px"></div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== AI 配置（首次启动） ===== -->
+ <div id="ai-setup-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-md">
+ <div class="modal-header">
+ <h2> 配置 AI 后端</h2>
+ <button class="modal-close" id="ai-setup-close">×</button>
+ </div>
+ <div class="modal-body">
+ <p style="font-size:12px;color:var(--fg-muted);margin-bottom:10px;line-height:1.6">
+ 配置一次后存到 <code>.env</code>，跨设备复制整个目录就能用。<br>
+ 推荐 <b>DeepSeek</b>（便宜、量大）：<a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:var(--accent)">申请 API key</a>
+ </p>
+ <div style="display:flex;gap:6px;margin-bottom:10px">
+ <button class="btn small" id="ai-setup-preset-deepseek" style="flex:1"> 用 DeepSeek 预设</button>
+ <button class="btn small" id="ai-setup-preset-openai" style="flex:1"> 用 OpenAI 预设</button>
+ </div>
+ <div class="form-row">
+ <label>Provider</label>
+ <select id="ai-setup-provider">
+ <option value="openai_compatible">openai_compatible（DeepSeek / 其它）</option>
+ <option value="openai">openai</option>
+ <option value="anthropic">anthropic（暂未深度测试）</option>
+ </select>
+ </div>
+ <div class="form-row">
+ <label>API Key</label>
+ <input type="password" id="ai-setup-key" placeholder="sk-..." autocomplete="off" style="width:100%" />
+ </div>
+ <div class="form-row">
+ <label>Base URL</label>
+ <input type="text" id="ai-setup-base-url" placeholder="https://api.deepseek.com/v1" style="width:100%" />
+ </div>
+ <div class="form-row">
+ <label>模型</label>
+ <input type="text" id="ai-setup-model" placeholder="deepseek-chat" style="width:100%" />
+ </div>
+ <div id="ai-setup-msg" style="font-size:11.5px;min-height:14px"></div>
+ </div>
+ <div class="modal-footer">
+ <button class="btn" id="ai-setup-skip" style="display:none">稍后</button>
+ <button class="btn" id="ai-setup-cancel">取消</button>
+ <button class="btn primary" id="ai-setup-save"> 保存</button>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 审稿进度看板 ===== -->
+ <div id="review-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-3xl">
+ <div class="modal-header">
+ <h2> 审稿进度看板</h2>
+ <button class="modal-close" id="review-close">×</button>
+ </div>
+ <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+ <div id="review-summary" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap"></div>
+ <div id="review-legend" style="margin-bottom:10px;font-size:10.5px;color:var(--fg-muted);display:flex;gap:10px;flex-wrap:wrap"></div>
+ <div id="review-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px"></div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== 命令面板（Ctrl+K） ===== -->
+ <div id="palette-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-md">
+ <div class="modal-header">
+ <h2> 命令面板</h2>
+ </div>
+ <div class="modal-body" style="padding:0">
+ <input type="text" id="palette-input" class="palette-search" placeholder="搜索功能 / 命令..." autocomplete="off" />
+ <div id="palette-results" class="palette-results"></div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ============== 每日编辑简报 Modal (Phase 1) ============== -->
+ <div id="brief-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-xl">
+ <div class="modal-header">
+ <h2> 今日编辑简报</h2>
+ <div style="display:flex;gap:6px;align-items:center">
+ <span id="brief-cache-tag" class="placeholder" style="font-size:10.5px;display:none">缓存</span>
+ <button class="btn small" id="brief-refresh" title="强制重算 (跳过缓存)" style="font-size:10.5px">↻ 重算</button>
+ <button class="modal-close" id="brief-close">×</button>
+ </div>
+ </div>
+ <div class="modal-body" style="max-height:76vh;overflow-y:auto;">
+ <div id="brief-loading" class="placeholder" style="text-align:center;padding:24px">
+ <div>加载中…</div>
+ <div style="font-size:10.5px;color:var(--fg-dim);margin-top:4px">硬关联即时返回, LLM 建议 5-10s, 疑点扫描 &lt;1s</div>
+ </div>
+ <div id="brief-content" style="display:none">
+ <!-- 三段折叠区: 硬关联 / LLM 建议 / 自动疑点 -->
+ <details open class="brief-section">
+ <summary> 硬关联 (上一章 / 本章位置 / 人物 / 伏笔)</summary>
+ <div id="brief-hard" style="padding:8px 0"></div>
+ </details>
+ <details open class="brief-section">
+ <summary> LLM 编辑建议 (3-5 条)</summary>
+ <div id="brief-llm" style="padding:8px 0"></div>
+ </details>
+ <details open class="brief-section">
+ <summary> 自动疑点 (信息泄漏 / 未登记人名 / 时间矛盾 / 风格违例)</summary>
+ <div id="brief-issues" style="padding:8px 0"></div>
+ </details>
+ <div id="brief-elapsed" style="font-size:10.5px;color:var(--fg-dim);text-align:right;margin-top:8px"></div>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ <script src="/static/app.js?v=2.1.0"></script>
+</body>
+</html>

@@ -1,0 +1,803 @@
+"""
+novelai.writer
+章节生成与一致性检查流水线。
+
+典型流程：
+1. 准备大纲（outline 阶段）
+2. 生成章节正文
+3. 生成摘要 + 提取事件
+4. 跑一致性检查
+5. 如果有 high severity issue，自动重写或人工确认
+6. 写入数据库
+"""
+from __future__ import annotations
+import re
+import time
+import json
+from typing import Any
+from .db import Database
+from . import knowledge as kb
+from . import retriever
+from .ai_client import AIClient, AICallError
+from .config import CONFIG
+from . import prompts
+
+
+# ============================================================
+# 1. 大纲生成
+# ============================================================
+
+def generate_outline(
+    db: Database,
+    ai: AIClient,
+    target_chapters: int = 30,
+) -> dict:
+    """
+    根据项目信息生成章节目录大纲，并写入 chapter 表（仅大纲，不生成正文）。
+    """
+    project = kb.get_or_create_project(db)
+    chars = kb.list_characters(db)
+    chars_brief = "\n".join(
+        f"- {c['name']}（{c.get('role','')}）：{c.get('basic_info','')} 性格：{c.get('personality','')}"
+        for c in chars
+    ) or "（尚未定义人物）"
+
+    threads = kb.list_threads(db)
+    beats = "\n".join(
+        f"- [{t.get('thread_type','')}] {t['title']}：{t.get('description','')} (状态：{t['status']})"
+        for t in threads
+    ) or "（尚未定义关键事件/伏笔）"
+
+    messages = [
+        {"role": "system", "content": prompts.OUTLINE_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.OUTLINE_USER_TEMPLATE,
+            synopsis=project.get("synopsis") or "（未填写）",
+            style=project.get("style") or "（未指定）",
+            pov_mode=project.get("pov_mode") or "限知视角",
+            target_chapters=target_chapters,
+            characters_brief=chars_brief,
+            key_beats=beats,
+        )},
+    ]
+    data = ai.chat_json(messages, temperature=0.7)
+    chapters = data.get("chapters", [])
+
+    # 写入 chapter 表
+    char_name_to_id = {c["name"]: c["id"] for c in chars}
+    for ch in chapters:
+        idx = ch["idx"]
+        pov_name = ch.get("pov_character") or ""
+        pov_id = char_name_to_id.get(pov_name)
+        existing = kb.get_chapter_by_idx(db, idx)
+        if existing:
+            kb.update_chapter(
+                db, existing["id"],
+                title=ch.get("title", existing["title"]),
+                outline=ch.get("summary", "") + "\n\n【承接】" + ch.get("causal_link","") + (f"\n\n【钩子】{ch.get('hook','')}" if ch.get("hook") else ""),
+                story_time_start=ch.get("story_time"),
+                story_time_end=ch.get("story_time"),
+                location=ch.get("location", existing.get("location","")),
+                pov_character_id=pov_id if pov_id else existing.get("pov_character_id") or None,
+            )
+        else:
+            kb.add_chapter(
+                db,
+                idx=idx,
+                title=ch.get("title", f"第{idx}章"),
+                outline=ch.get("summary", "") + "\n\n【承接】" + ch.get("causal_link","") + (f"\n\n【钩子】{ch.get('hook','')}" if ch.get("hook") else ""),
+                story_time_start=ch.get("story_time"),
+                story_time_end=ch.get("story_time"),
+                location=ch.get("location", ""),
+                pov_character_id=pov_id,
+            )
+    return data
+
+
+# ============================================================
+# 2. 章节正文生成
+# ============================================================
+
+def _format_user(p: str, **kwargs) -> str:
+    """允许 prompt 模板缺字段时优雅降级。"""
+    class _D(dict):
+        def __missing__(self, k):
+            return ""
+    return p.format_map(_D(kwargs))
+
+
+def generate_chapter(
+    db: Database,
+    ai: AIClient,
+    chapter_idx: int,
+    target_words: int | None = None,
+    max_retries: int = 2,
+    on_chunk=None,
+    on_phase=None,
+) -> str:
+    """生成单章正文（不含一致性检查）。返回正文。
+
+    长章节（>5000 字）采用分段续写策略：
+    1. 第一段：按大纲生成前半部分
+    2. 后续段：把已生成的内容作为前文，让 AI 续写直到达到目标字数
+    on_chunk: 流式回调。on_phase: 阶段回调（"生成第1段"/"续写第2段"）。
+    """
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        raise ValueError(f"第 {chapter_idx} 章不存在")
+
+    ctx = retriever.build_chapter_context(db, chapter_idx, recent_window=CONFIG.writer.recent_chapter_window)
+    target_words = target_words or CONFIG.writer.target_chapter_words
+
+    # 第一段生成
+    text = ""
+    for attempt in range(max_retries + 1):
+        messages = [
+            {"role": "system", "content": prompts.CHAPTER_SYSTEM.format(target_words=target_words)},
+            {"role": "user", "content": _format_user(prompts.CHAPTER_USER_TEMPLATE, **ctx)},
+        ]
+        if attempt > 0:
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"上一次输出仅 {len(text)} 字，远低于目标 {target_words} 字。"
+                    "请充分展开描写：每个场景至少 500-800 字，包含环境、动作、对话、内心活动的交替。"
+                    "不要只用概括性叙述，要写具体的场景。"
+                ),
+            })
+        if on_phase: on_phase("generate", f"AI 正在写正文（第 1 段）…")
+        if on_chunk and attempt == 0:
+            text = ""
+            for piece in ai.chat_stream(messages, temperature=0.85, max_tokens=CONFIG.ai.max_tokens):
+                text += piece
+                on_chunk(piece)
+        else:
+            text = ai.chat(messages, temperature=0.85, max_tokens=CONFIG.ai.max_tokens)
+        text = text.strip()
+        if len(text) >= min(target_words * 0.3, 2000):
+            break
+
+    # 分段续写：如果第一段不够长且目标 >5000 字，继续追加
+    max_segments = 4  # 最多续写 3 次（共 4 段）
+    segment = 1
+    while len(text) < target_words * 0.7 and segment < max_segments:
+        segment += 1
+        remaining = target_words - len(text)
+        if on_phase: on_phase("generate", f"AI 正在续写正文（第 {segment} 段，还需约 {remaining} 字）…")
+
+        # 续写 prompt：把已写的内容作为前文
+        cont_messages = [
+            {"role": "system", "content": f"你是长篇小说作家。前文已写了 {len(text)} 字，目标是 {target_words} 字。"
+             f"请紧接前文继续写，不要重复已有内容，不要写总结或结尾（除非已接近目标字数）。"
+             f"继续展开新的场景、对话、冲突。"},
+            {"role": "user", "content": f"【本章大纲】\n{ctx.get('outline', '')}\n\n"
+             f"【已写的前文最后 800 字】\n...{text[-800:]}\n\n"
+             f"请紧接上文继续写约 {min(remaining, 5000)} 字。直接输出正文，不要标题或解释。"},
+        ]
+        cont_text = ""
+        if on_chunk:
+            for piece in ai.chat_stream(cont_messages, temperature=0.85, max_tokens=CONFIG.ai.max_tokens):
+                cont_text += piece
+                on_chunk(piece)
+        else:
+            cont_text = ai.chat(cont_messages, temperature=0.85, max_tokens=CONFIG.ai.max_tokens)
+        cont_text = cont_text.strip()
+        if not cont_text:
+            break  # AI 不再续写了
+        text += "\n\n" + cont_text
+
+    return text
+
+
+# ============================================================
+# 3. 摘要 + 事件抽取
+# ============================================================
+
+def summarize_chapter(db: Database, ai: AIClient, chapter_idx: int, chapter_text: str) -> str:
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    messages = [
+        {"role": "system", "content": prompts.SUMMARIZE_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.SUMMARIZE_USER,
+            chapter_text=chapter_text,
+            outline=chapter.get("outline", ""),
+        )},
+    ]
+    summary = ai.chat(messages, temperature=0.3, model=CONFIG.ai.mini_model).strip()
+    return summary
+
+
+def extract_events(
+    db: Database,
+    ai: AIClient,
+    chapter_idx: int,
+    chapter_text: str,
+    summary: str,
+) -> list[dict]:
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        return []
+    chars = kb.list_characters(db)
+    chars_brief = ", ".join(c["name"] for c in chars)
+    messages = [
+        {"role": "system", "content": prompts.EVENT_EXTRACT_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.EVENT_EXTRACT_USER,
+            outline=chapter.get("outline", ""),
+            summary=summary,
+            chapter_text=chapter_text,
+            characters_brief=chars_brief,
+        )},
+    ]
+    try:
+        data = ai.chat_json(messages, temperature=0.2)
+    except AICallError:
+        return []
+    events = data.get("events", []) if isinstance(data, dict) else []
+    # 归一化（修复 bug #12：name→id 映射含别名）
+    char_name_to_id = kb.build_name_to_id_map(db, include_aliases=True)
+    for ev in events:
+        ev["chapter_id"] = chapter["id"]
+        # 映射参与人物；未登记的自动新建 minor（而非丢弃）
+        ps = ev.get("participants") or []
+        pids = []
+        for p in ps:
+            if not p or not isinstance(p, str):
+                continue
+            cid = char_name_to_id.get(p)
+            if not cid:
+                if len(p) < 2 or p in ("某", "众人", "旁人", "众人皆"):
+                    continue
+                try:
+                    cid = kb.add_character(db, p, role="minor", basic_info="（抽取自动创建）")
+                    char_name_to_id[p] = cid
+                except Exception:
+                    continue
+            if cid:
+                pids.append(cid)
+        ev["_participants_ids"] = pids
+    return events
+
+
+# ============================================================
+# 全本 LLM 抽取：把已有正文直接结构化成事件 + 伏笔入库
+# ============================================================
+
+def extract_events_for_chapter(db: Database, ai: AIClient, chapter_idx: int) -> dict:
+    """
+    抽取单章正文 → 事件入库。
+    返回 {ok, added, skipped, error, events: [...]}
+    """
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        return {"ok": False, "error": f"第 {chapter_idx} 章不存在"}
+    text = (chapter.get("final_text") or chapter.get("draft") or "").strip()
+    if not text:
+        return {"ok": False, "error": f"第 {chapter_idx} 章无正文"}
+
+    chars = kb.list_characters(db)
+    chars_brief = "、".join(c["name"] for c in chars) if chars else "（无）"
+
+    messages = [
+        {"role": "system", "content": prompts.EVENT_BATCH_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.EVENT_BATCH_USER,
+            chapter_idx=chapter["idx"],
+            title=chapter.get("title", ""),
+            word_count=len(text),
+            characters_brief=chars_brief,
+            chapter_text=text,
+        )},
+    ]
+    try:
+        data = ai.chat_json(messages, temperature=0.2)
+    except AICallError as e:
+        return {"ok": False, "error": f"LLM 调用失败: {e}"}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "LLM 返回格式异常", "raw": str(data)[:300]}
+
+    raw_events = data.get("events", []) or []
+    if not raw_events:
+        return {"ok": True, "added": 0, "skipped": 0, "events": []}
+
+    # 检查已有事件，避免重复（按 title 相似）
+    existing_titles = {e.get("title", "") for e in kb.list_events(db, chapter_id=chapter["id"])}
+
+    # 修复 bug #12：name→id 映射含别名（旧版只用 name，别名 participants 被丢弃）
+    char_name_to_id = kb.build_name_to_id_map(db, include_aliases=True)
+    base_t = chapter.get("story_time_start") or chapter["idx"]
+    end_t = chapter.get("story_time_end") or base_t
+    span = max(0.1, float(end_t - base_t))
+
+    added = 0
+    skipped = 0
+    out = []
+    # 两阶段：先确定要加入的事件（保留原始序号 i 用于 AI 的 cause_event_ids 序号映射）
+    to_add = []  # [(原始序号 i, ev)]
+    for i, ev in enumerate(raw_events, 1):
+        if not isinstance(ev, dict) or not ev.get("title"):
+            skipped += 1
+            continue
+        title = ev["title"].strip()
+        if title in existing_titles:
+            skipped += 1
+            continue
+        to_add.append((i, ev))
+    # BUG 修复：AI 的 cause_event_ids 是「本章内事件序号」(1-based)，不是 db id。
+    # 先全部插入收集真实 id，再把序号重映射成 id 回填（与 extract 重抽取路径同逻辑）。
+    seq_to_id: dict[int, int] = {}
+    for i, ev in to_add:
+        offset = float(ev.get("story_time_offset") or 0.5)
+        offset = max(0.0, min(1.0, offset))
+        actual_t = base_t + span * offset
+        ps = ev.get("participants") or []
+        pids = []
+        for p in ps:
+            if not p or not isinstance(p, str):
+                continue
+            cid = char_name_to_id.get(p)
+            if not cid:
+                # 未登记人物：自动新建 minor 角色（而非丢弃），让小人物也能入库
+                # 跳过明显非人名的（如"某"、"众人"、纯数字、过短）
+                if len(p) < 2 or p in ("某", "众人", "旁人", "众人皆"):
+                    continue
+                try:
+                    cid = kb.add_character(db, p, role="minor", basic_info="（抽取自动创建）")
+                    char_name_to_id[p] = cid  # 同章后续同名复用
+                    _log.info("自动创建 minor 角色：%s（第%d章事件抽取）", p, chapter_idx)
+                except Exception:
+                    continue
+            if cid:
+                pids.append(cid)
+        try:
+            eid = kb.add_event(
+                db,
+                chapter_id=chapter["id"],
+                story_time=actual_t,
+                sequence_in_chapter=len(kb.list_events(db, chapter_id=chapter["id"])) + 1,
+                title=ev["title"].strip(),
+                summary=ev.get("summary", ""),
+                event_type=ev.get("event_type", "action"),
+                location=ev.get("location", chapter.get("location", "")),
+                cause_event_ids=[],  # 占位，下一步回填
+                participants=pids,
+                importance=int(ev.get("importance") or 3),
+            )
+            seq_to_id[i] = eid
+            out.append({"id": eid, **ev, "chapter_idx": chapter_idx, "actual_story_time": actual_t})
+            added += 1
+        except Exception as e:
+            skipped += 1
+    # 回填：序号 -> 真实 db id
+    for i, ev in to_add:
+        if i not in seq_to_id:
+            continue
+        raw = ev.get("cause_event_ids") or []
+        mapped = [seq_to_id[int(x)] for x in raw
+                  if isinstance(x, (int, float)) and int(x) in seq_to_id]
+        if mapped:
+            db.execute(
+                "UPDATE event SET cause_event_ids=? WHERE id=?",
+                (Database.to_json(mapped), seq_to_id[i]),
+            )
+    # 自动回写 character.status（death/disappearance 事件 → 角色状态更新）
+    status_updated = kb.apply_status_from_events(db, [ev for _, ev in to_add], char_name_to_id)
+    # 自动统计出场频率 + 更新首末章节
+    appearance_updated = kb.update_appearances(db, [ev for _, ev in to_add], char_name_to_id, chapter_idx)
+    return {"ok": True, "added": added, "skipped": skipped, "events": out, "status_updated": status_updated, "appearances_updated": appearance_updated}
+
+
+def extract_threads_for_chapter(db: Database, ai: AIClient, chapter_idx: int) -> dict:
+    """
+    抽取单章正文 → 伏笔入库（区分 planted / payoff / developing）。
+    若识别为 payoff/developing 且能 linked 到已存在的伏笔，自动把 resolved_chapter_id 写到那条伏笔。
+    """
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        return {"ok": False, "error": f"第 {chapter_idx} 章不存在"}
+    text = (chapter.get("final_text") or chapter.get("draft") or "").strip()
+    if not text:
+        return {"ok": False, "error": f"第 {chapter_idx} 章无正文"}
+
+    # 已有伏笔清单（提供 LLM 用于 linked_title 关联）
+    existing = kb.list_threads(db)
+    existing_lines = []
+    for t in existing:
+        existing_lines.append(
+            f"  - #{t['id']} [{t.get('status','planted')}] 《{t['title']}》({t.get('description','')[:60]})"
+        )
+    existing_threads_str = "\n".join(existing_lines) if existing_lines else "（暂无）"
+
+    messages = [
+        {"role": "system", "content": prompts.THREAD_BATCH_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.THREAD_BATCH_USER,
+            chapter_idx=chapter["idx"],
+            title=chapter.get("title", ""),
+            word_count=len(text),
+            existing_threads=existing_threads_str,
+            chapter_text=text,
+        )},
+    ]
+    try:
+        data = ai.chat_json(messages, temperature=0.2)
+    except AICallError as e:
+        return {"ok": False, "error": f"LLM 调用失败: {e}"}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "LLM 返回格式异常", "raw": str(data)[:300]}
+
+    raw_threads = data.get("threads", []) or []
+    if not raw_threads:
+        return {"ok": True, "added": 0, "linked": 0, "threads": []}
+
+    added = 0
+    linked = 0
+    out = []
+    title_to_thread = {t["title"].strip(): t for t in existing}
+    for th in raw_threads:
+        if not isinstance(th, dict) or not th.get("title"):
+            continue
+        title = th["title"].strip()
+        status = th.get("status", "planted")
+        # 默认参数
+        thread_type = th.get("thread_type", "foreshadow")
+        desc = th.get("description", "")
+        confidence = float(th.get("confidence") or 0.7)
+        linked_title = th.get("linked_title")
+
+        # 入库
+        planted_id = chapter["id"] if status == "planted" else None
+        payoff_id = chapter["id"] if status in ("payoff", "developing") else None
+        try:
+            tid = kb.add_thread(
+                db,
+                title=title,
+                description=desc,
+                thread_type=thread_type,
+                status=status,
+                planted_chapter_id=planted_id,
+            )
+        except Exception:
+            continue
+        added += 1
+        thread_record = {"id": tid, "title": title, "status": status, **th}
+
+        # 如果是 payoff/developing 且能 linked 到已有伏笔，关联
+        if status in ("payoff", "developing") and linked_title:
+            target = title_to_thread.get(linked_title.strip())
+            if target:
+                update_fields = {}
+                if status == "payoff" and not target.get("resolved_chapter_id"):
+                    update_fields["resolved_chapter_id"] = chapter["id"]
+                    update_fields["status"] = "resolved"
+                # 若已存在 payoff_chapter_id，避免覆盖
+                if not target.get("payoff_chapter_id"):
+                    update_fields["payoff_chapter_id"] = chapter["id"]
+                if update_fields:
+                    kb.update_thread(db, target["id"], **update_fields)
+                    linked += 1
+                    thread_record["linked_to"] = target["id"]
+        out.append(thread_record)
+    return {"ok": True, "added": added, "linked": linked, "threads": out}
+
+
+def extract_all(db: Database, ai: AIClient, only_chapters: list[int] | None = None) -> dict:
+    """逐章跑 events + threads 抽取。返回汇总报告。"""
+    chapters = kb.list_chapters(db)
+    if only_chapters:
+        chapters = [c for c in chapters if c["idx"] in only_chapters]
+
+    report = {
+        "total_chapters": len(chapters),
+        "events": {"ok": 0, "failed": 0, "added": 0, "skipped": 0, "details": []},
+        "threads": {"ok": 0, "failed": 0, "added": 0, "linked": 0, "details": []},
+    }
+    for c in chapters:
+        # 事件
+        ev_r = extract_events_for_chapter(db, ai, c["idx"])
+        if ev_r.get("ok"):
+            report["events"]["ok"] += 1
+            report["events"]["added"] += ev_r.get("added", 0)
+            report["events"]["skipped"] += ev_r.get("skipped", 0)
+        else:
+            report["events"]["failed"] += 1
+        report["events"]["details"].append({
+            "chapter_idx": c["idx"],
+            "title": c["title"],
+            "added": ev_r.get("added", 0) if ev_r.get("ok") else 0,
+            "error": ev_r.get("error"),
+        })
+        # 伏笔
+        th_r = extract_threads_for_chapter(db, ai, c["idx"])
+        if th_r.get("ok"):
+            report["threads"]["ok"] += 1
+            report["threads"]["added"] += th_r.get("added", 0)
+            report["threads"]["linked"] += th_r.get("linked", 0)
+        else:
+            report["threads"]["failed"] += 1
+        report["threads"]["details"].append({
+            "chapter_idx": c["idx"],
+            "title": c["title"],
+            "added": th_r.get("added", 0) if th_r.get("ok") else 0,
+            "linked": th_r.get("linked", 0) if th_r.get("ok") else 0,
+            "error": th_r.get("error"),
+        })
+    return report
+
+
+def extract_events_only(db: Database, ai: AIClient, only_chapters: list[int] | None = None) -> dict:
+    """只抽 events, 不抽 threads. 给前端 /api/extract/events-all 用."""
+    chapters = kb.list_chapters(db)
+    if only_chapters:
+        chapters = [c for c in chapters if c["idx"] in only_chapters]
+    report = {"total_chapters": len(chapters), "events": {"ok": 0, "failed": 0, "added": 0, "skipped": 0, "details": []}}
+    for c in chapters:
+        ev_r = extract_events_for_chapter(db, ai, c["idx"])
+        if ev_r.get("ok"):
+            report["events"]["ok"] += 1
+            report["events"]["added"] += ev_r.get("added", 0)
+            if ev_r.get("skipped"):
+                report["events"]["skipped"] += 1
+        else:
+            report["events"]["failed"] += 1
+        report["events"]["details"].append({
+            "chapter_idx": c["idx"],
+            "title": c["title"],
+            "added": ev_r.get("added", 0) if ev_r.get("ok") else 0,
+            "error": ev_r.get("error"),
+        })
+    return report
+
+
+def extract_threads_only(db: Database, ai: AIClient, only_chapters: list[int] | None = None) -> dict:
+    """只抽 threads, 不抽 events. 给前端 /api/extract/threads-all 用."""
+    chapters = kb.list_chapters(db)
+    if only_chapters:
+        chapters = [c for c in chapters if c["idx"] in only_chapters]
+    report = {"total_chapters": len(chapters), "threads": {"ok": 0, "failed": 0, "added": 0, "linked": 0, "details": []}}
+    for c in chapters:
+        th_r = extract_threads_for_chapter(db, ai, c["idx"])
+        if th_r.get("ok"):
+            report["threads"]["ok"] += 1
+            report["threads"]["added"] += th_r.get("added", 0)
+            report["threads"]["linked"] += th_r.get("linked", 0)
+        else:
+            report["threads"]["failed"] += 1
+        report["threads"]["details"].append({
+            "chapter_idx": c["idx"],
+            "title": c["title"],
+            "added": th_r.get("added", 0) if th_r.get("ok") else 0,
+            "linked": th_r.get("linked", 0) if th_r.get("ok") else 0,
+            "error": th_r.get("error"),
+        })
+    return report
+
+
+# ============================================================
+# 4. 一致性检查
+# ============================================================
+
+def run_consistency_check(
+    db: Database,
+    ai: AIClient,
+    chapter_idx: int,
+    chapter_text: str,
+) -> dict:
+    ctx = retriever.build_consistency_context(db, chapter_idx, chapter_text)
+    messages = [
+        {"role": "system", "content": prompts.CONSISTENCY_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.CONSISTENCY_USER_TEMPLATE, **ctx)},
+    ]
+    data = ai.chat_json(messages, temperature=0.1, model=CONFIG.ai.mini_model)
+    return data if isinstance(data, dict) else {"passed": False, "issues": [], "summary": "模型未返回 dict"}
+
+
+# ============================================================
+# 5. 端到端流水线：生成 -> 摘要 -> 事件 -> 一致性 -> 写库
+# ============================================================
+
+def write_chapter_pipeline(
+    db: Database,
+    ai: AIClient,
+    chapter_idx: int,
+    target_words: int | None = None,
+    auto_apply_facts: bool = False,
+    auto_fix_retries: int | None = None,
+    on_chunk=None,
+    on_phase=None,
+) -> dict:
+    """
+    完整流水线：
+    1. 生成正文
+    2. 摘要
+    3. 事件抽取并入库
+    4. 一致性检查
+    5. 若失败且启用 auto_fix_retries，自动重写
+    6. 写终稿、报告
+    """
+    auto_fix_retries = auto_fix_retries if auto_fix_retries is not None else CONFIG.writer.max_consistency_retries
+    if on_phase: on_phase("generate", "AI 正在写正文…")
+    text = generate_chapter(db, ai, chapter_idx, target_words=target_words, on_chunk=on_chunk, on_phase=on_phase)
+    if on_phase: on_phase("summarize", "生成摘要…")
+    summary = summarize_chapter(db, ai, chapter_idx, text)
+    if on_phase: on_phase("events", "抽取事件…")
+    events = extract_events(db, ai, chapter_idx, text, summary)
+
+    # 入库事件
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        return {"error": f"第 {chapter_idx} 章在生成后意外消失", "retries": 0}
+    ch_id = chapter["id"]
+    ch_location = chapter.get("location", "")
+
+    # BUG 修复：AI 返回的 cause_event_ids 是「本章内事件序号」(1-based)，不是 db id。
+    # 与下方 auto-fix 重抽路径同逻辑：先占位插入收集真实 id，再重映射回填。
+    seq_to_id: dict[int, int] = {}
+    for i, ev in enumerate(events, 1):
+        st = ev.get("story_time_offset")
+        base_t = chapter.get("story_time_start") or 0
+        t_end = chapter.get("story_time_end") or base_t
+        actual_t = base_t + (t_end - base_t) * float(st or 0.5)
+        new_id = kb.add_event(
+            db,
+            chapter_id=ch_id,
+            story_time=actual_t,
+            sequence_in_chapter=i,
+            title=ev.get("title", f"事件{i}"),
+            summary=ev.get("summary", ""),
+            event_type=ev.get("event_type", "action"),
+            location=ev.get("location", ch_location),
+            cause_event_ids=[],  # 占位，下一步回填
+            participants=ev.get("_participants_ids") or [],
+            importance=int(ev.get("importance") or 3),
+        )
+        seq_to_id[i] = new_id
+    # 回填：序号 -> 真实 db id
+    for i, ev in enumerate(events, 1):
+        if i not in seq_to_id:
+            continue
+        raw = ev.get("cause_event_ids") or []
+        mapped = [seq_to_id[int(x)] for x in raw
+                  if isinstance(x, (int, float)) and int(x) in seq_to_id]
+        if mapped:
+            db.execute(
+                "UPDATE event SET cause_event_ids=? WHERE id=?",
+                (Database.to_json(mapped), seq_to_id[i]),
+            )
+
+    # 自动回写 character.status + 出场频率（death/disappearance 事件 → 角色状态；所有事件 → 出场统计）
+    _name_to_id = kb.build_name_to_id_map(db, include_aliases=True)
+    kb.apply_status_from_events(db, events, _name_to_id)
+    kb.update_appearances(db, events, _name_to_id, chapter_idx)
+
+    # 一致性
+    if on_phase: on_phase("consistency", "一致性检查…")
+    report = run_consistency_check(db, ai, chapter_idx, text)
+    issues = report.get("issues", []) or []
+
+    # 自动尝试修复（仅对 high severity 触发）
+    attempt = 0
+    while attempt < auto_fix_retries and any(i.get("severity") == "high" for i in issues):
+        attempt += 1
+        # 在正文中标注问题位置，帮助 LLM 精确定位
+        annotated_text = text
+        high_issues = [i for i in issues if i.get("severity") == "high"]
+        issue_annotations = []
+        for i, iss in enumerate(high_issues, 1):
+            loc = iss.get("location", "")
+            cat = iss.get("category", "")
+            expl = iss.get("explanation", "")
+            fix = iss.get("fix_suggestion", "")
+            issue_annotations.append(
+                f"{i}. [{cat.upper()}] {expl}\n   修复方向：{fix}\n   原文位置：{loc}"
+            )
+        fix_prompt = (
+            "请修改以下章节正文，消除所有 HIGH severity 问题。"
+            "只修改涉及问题的段落，保留其他内容不变。\n\n"
+            f"【原文章节正文】\n{annotated_text}\n\n"
+            f"【待修复问题清单】\n" + "\n\n".join(issue_annotations) + "\n\n"
+            "请输出修复后的完整章节正文（不含解释）。"
+        )
+        messages = [
+            {"role": "system", "content": prompts.FIX_SYSTEM},
+            {"role": "user", "content": fix_prompt},
+        ]
+        text = ai.chat(messages, temperature=0.6).strip()
+        # 重新检查
+        report = run_consistency_check(db, ai, chapter_idx, text)
+        issues = report.get("issues", []) or []
+
+    # auto-fix 后重新生成摘要和事件（确保与最终正文一致）
+    if attempt > 0:
+        summary = summarize_chapter(db, ai, chapter_idx, text)
+        # 清除旧事件，重新抽取
+        old_events = kb.list_events(db, chapter_id=ch_id)
+        for old_ev in old_events:
+            try:
+                db.execute("DELETE FROM event WHERE id=?", (old_ev["id"],))
+            except Exception:
+                pass
+        events = extract_events(db, ai, chapter_idx, text, summary)
+        # BUG 修复：AI 返回的 cause_event_ids 是「本章内的事件序号」(1-based)，
+        # 不是数据库 id。先全部插入收集真实 id，再把序号重映射成 id 后回填，
+        # 否则因果链图/逻辑扫描器会用错误的 id 拼边（events.find(x.id===seq) 永远找错）。
+        seq_to_id: dict[int, int] = {}  # 序号(1-based) -> 真实 event.id
+        for i, ev in enumerate(events, 1):
+            st = ev.get("story_time_offset")
+            base_t = chapter.get("story_time_start") or 0
+            t_end = chapter.get("story_time_end") or base_t
+            actual_t = base_t + (t_end - base_t) * float(st or 0.5)
+            new_id = kb.add_event(
+                db,
+                chapter_id=ch_id,
+                story_time=actual_t,
+                sequence_in_chapter=i,
+                title=ev.get("title", f"事件{i}"),
+                summary=ev.get("summary", ""),
+                event_type=ev.get("event_type", "action"),
+                location=ev.get("location", ch_location),
+                cause_event_ids=[],  # 占位，下一步回填真实 id
+                participants=ev.get("_participants_ids") or [],
+                importance=int(ev.get("importance") or 3),
+            )
+            seq_to_id[i] = new_id
+        # 回填：把 AI 给的序号(1-based)映射成刚插入的真实 db id
+        for i, ev in enumerate(events, 1):
+            raw = ev.get("cause_event_ids") or []
+            mapped = [seq_to_id[int(x)] for x in raw
+                      if isinstance(x, (int, float)) and int(x) in seq_to_id]
+            if mapped:
+                db.execute(
+                    "UPDATE event SET cause_event_ids=? WHERE id=?",
+                    (Database.to_json(mapped), seq_to_id[i]),
+                )
+
+    # 写终稿
+    kb.update_chapter(
+        db, ch_id,
+        draft=text,
+        final_text=text,
+        summary=summary,
+        word_count=len(text),
+    )
+
+    # 持久化报告
+    kb.save_consistency_report(
+        db,
+        chapter_id=ch_id,
+        passed=bool(report.get("passed")),
+        issues=issues,
+        suggestions=report.get("summary", ""),
+        raw_response=json.dumps(report, ensure_ascii=False),
+    )
+
+    # 抽取新事实（可选）
+    new_facts = []
+    if CONFIG.writer.enable_fact_extraction and isinstance(report, dict):
+        for f in (report.get("new_facts_extracted") or []):
+            try:
+                # known_by 可能是 "public" 或角色名列表
+                kb_list = f.get("known_by") or []
+                if isinstance(kb_list, str):
+                    kb_list = [kb_list]
+                if "public" in kb_list or not kb_list:
+                    known_ids: list[int] = []
+                else:
+                    char_map = {c["name"]: c["id"] for c in kb.list_characters(db)}
+                    known_ids = [char_map[n] for n in kb_list if n in char_map]
+                fid = kb.add_fact(
+                    db,
+                    content=f["content"],
+                    category=f.get("category", "general"),
+                    reliability=f.get("reliability", "reliable"),
+                    known_by=known_ids,
+                    established_chapter_id=ch_id,
+                )
+                new_facts.append({"id": fid, **f})
+            except Exception:
+                pass
+
+    return {
+        "chapter_id": ch_id,
+        "text": text,
+        "summary": summary,
+        "events": events,
+        "consistency_report": report,
+        "new_facts": new_facts,
+        "retries": attempt,
+    }

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Data (用户数据不上传)
+data/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Screenshots / temp
+_*.png
+_*.py
+_*.js
+nul
+
+# Logs
+*.log

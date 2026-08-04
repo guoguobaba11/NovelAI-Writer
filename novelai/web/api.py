@@ -18,7 +18,7 @@ from novelai.config import CONFIG, _project_root
 from novelai.db import Database
 from novelai import knowledge as kb
 from novelai.ai_client import AIClient, AICallError
-from novelai import writer, retriever, consistency as cons_mod
+from novelai import writer, retriever, consistency as cons_mod, prompts
 from novelai.errors import err_detail, log_exception, friendly_hint
 from novelai import scanner
 from novelai import importer
@@ -4341,6 +4341,11 @@ def api_review_status() -> dict:
             "SELECT * FROM consistency_report WHERE chapter_id=? ORDER BY id DESC LIMIT 1",
             (ch_id,),
         )
+        # 最近 AI 评审
+        rev = db.query_one(
+            "SELECT * FROM chapter_review WHERE chapter_id=? ORDER BY id DESC LIMIT 1",
+            (ch_id,),
+        )
         # 章节文本
         final = (c.get("final_text") or "").strip()
         draft = (c.get("draft") or "").strip()
@@ -4357,6 +4362,14 @@ def api_review_status() -> dict:
         else:
             status = "untouched"
         summary[status] = summary.get(status, 0) + 1
+        # AI 评审 high 级问题数
+        rev_high = None
+        if rev and rev["issues"]:
+            try:
+                rev_issues = json.loads(rev["issues"])
+                rev_high = sum(1 for it in rev_issues if it.get("severity") == "high")
+            except Exception:
+                rev_high = None
         chapters_status.append({
             "idx": c["idx"],
             "title": c.get("title", f"第{c['idx']}回"),
@@ -4366,5 +4379,118 @@ def api_review_status() -> dict:
             "resolved_comments": resolved_n,
             "consistency_passed": bool(cr["passed"]) if cr else None,
             "consistency_at": cr["created_at"] if cr else None,
+            "ai_review_score": round(rev["overall_score"], 1) if rev and rev["overall_score"] is not None else None,
+            "ai_review_at": rev["created_at"] if rev else None,
+            "ai_review_high": rev_high,
         })
     return {"summary": summary, "chapters": chapters_status}
+
+
+# ============== AI 评审（审稿看板单章） ==============
+
+@router.get("/editor/chapter/{idx}/ai-review")
+def api_get_ai_review(idx: int = ApiPath(ge=1, description="章节号, ≥1")) -> dict:
+    """取该章最近一次 AI 评审结果"""
+    db = get_db()
+    ch = kb.get_chapter_by_idx(db, idx)
+    if not ch:
+        raise HTTPException(404, "章节不存在")
+    rev = db.query_one(
+        "SELECT * FROM chapter_review WHERE chapter_id=? ORDER BY id DESC LIMIT 1",
+        (ch["id"],),
+    )
+    if not rev:
+        return {"ok": True, "review": None}
+    return {
+        "ok": True,
+        "review": {
+            "overall_score": round(rev["overall_score"], 1) if rev["overall_score"] is not None else None,
+            "overall_comment": rev["overall_comment"],
+            "dimensions": _safe_json_list(rev["dimensions"]),
+            "strengths": _safe_json_list(rev["strengths"]),
+            "issues": _safe_json_list(rev["issues"]),
+            "suggestions": _safe_json_list(rev["suggestions"]),
+            "created_at": rev["created_at"],
+        },
+    }
+
+
+@router.post("/editor/chapter/{idx}/ai-review")
+def api_run_ai_review(idx: int = ApiPath(ge=1, description="章节号, ≥1")) -> dict:
+    """对单章跑一次 AI 多维度评审，结果入库"""
+    db = get_db()
+    ch = kb.get_chapter_by_idx(db, idx)
+    if not ch:
+        raise HTTPException(404, "章节不存在")
+    text = (ch.get("final_text") or ch.get("draft") or "").strip()
+    if not text:
+        raise HTTPException(400, "章节无正文，无法评审")
+    try:
+        ctx = retriever.build_consistency_context(db, idx, text)
+        characters = "\n\n".join(filter(None, [
+            ctx.get("pov_profile"),
+            ctx.get("other_characters_profiles"),
+        ]))
+        user = prompts.AI_REVIEW_USER_TEMPLATE.format(
+            style=ctx.get("style") or "未设定",
+            synopsis=ctx.get("synopsis") or "（无梗概）",
+            outline=ctx.get("outline") or "（无大纲）",
+            chapter_text=text,
+            characters=characters or "（无人物档案）",
+            threads=ctx.get("relevant_threads") or "（无）",
+        )
+        messages = [
+            {"role": "system", "content": prompts.AI_REVIEW_SYSTEM},
+            {"role": "user", "content": user},
+        ]
+        data = AIClient().chat_json(messages, temperature=0.3, model=CONFIG.ai.mini_model)
+        if not isinstance(data, dict):
+            raise AICallError("评审模型未返回结构化 JSON")
+        # 归一化字段
+        dims = data.get("dimensions") or []
+        if isinstance(dims, list):
+            for d in dims:
+                d["score"] = max(0, min(10, float(d.get("score", 0))))
+        score = float(data.get("overall_score", 0) or 0)
+        score = max(0, min(100, round(score, 1)))
+        db.execute(
+            "INSERT INTO chapter_review(chapter_id, overall_score, overall_comment, dimensions, strengths, issues, suggestions, raw_response, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ch["id"],
+                score,
+                (data.get("overall_comment") or "").strip(),
+                json.dumps(dims, ensure_ascii=False),
+                json.dumps(data.get("strengths") or [], ensure_ascii=False),
+                json.dumps(data.get("issues") or [], ensure_ascii=False),
+                json.dumps(data.get("suggestions") or [], ensure_ascii=False),
+                json.dumps(data, ensure_ascii=False),
+                time.time(),
+            ),
+        )
+        return {
+            "ok": True,
+            "review": {
+                "overall_score": score,
+                "overall_comment": (data.get("overall_comment") or "").strip(),
+                "dimensions": dims,
+                "strengths": data.get("strengths") or [],
+                "issues": data.get("issues") or [],
+                "suggestions": data.get("suggestions") or [],
+                "created_at": time.time(),
+            },
+        }
+    except Exception as e:
+        log_exception("ai-review", e)
+        raise HTTPException(502, f"AI 评审失败: {friendly_hint(e)}") from e
+
+
+def _safe_json_list(raw) -> list:
+    """json 字段安全解析，失败返回空列表"""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []

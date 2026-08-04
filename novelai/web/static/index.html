@@ -162,7 +162,7 @@
  <!-- 顶条：极简三区——导航 | 核心操作 | 状态+视图 -->
  <div class="editor-topbar">
  <!-- 左：返回仪表盘 + 章节导航 -->
- <button class="btn-icon" id="ed-back" title="返回仪表盘" style="font-size:16px">‹</button>
+ <button class="btn-icon" id="ed-back" title="返回仪表盘" style="font-size:15px">‹</button>
  <button class="ed-toggle-right" id="ed-toggle-left" title="切换左侧栏 (Ctrl+[)">左栏</button>
  <div class="ed-toolbar-sep"></div>
  <div class="ed-chapter-nav">
@@ -297,7 +297,7 @@
  <div class="ed-right-pane" data-pane="comments">
  <div class="ed-section">
  <div class="ed-section-title">
- <span style="font-size:10px;color:var(--fg-dim);font-weight:normal">Ctrl+Shift+C 加批注</span>
+ <span style="font-size:11px;color:var(--fg-dim);font-weight:normal">Ctrl+Shift+C 加批注</span>
  </div>
  <div id="ed-comments-list" class="ed-comments-list">
  <p class="placeholder" style="font-size:11px;color:var(--fg-dim)">还没批注。<br>选段文本后右上角浮" 加批注"按钮。</p>
@@ -581,7 +581,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  <button class="modal-close" id="version-close">×</button>
  </div>
  <div class="modal-body" style="max-height:65vh;overflow-y:auto;">
- <div style="color:var(--fg-muted);font-size:11.5px;margin-bottom:10px">
+ <div style="color:var(--fg-muted);font-size:12px;margin-bottom:10px">
  每次"接受 AI 改稿"或"保存修改"会自动存一版。最多保留 30 版，超出自动丢弃最早的。
  </div>
  <div style="display:flex;gap:6px;margin-bottom:10px">
@@ -602,7 +602,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  <button class="modal-close" id="sn-close">×</button>
  </div>
  <div class="modal-body">
- <p style="font-size:12.5px;color:var(--fg-muted);margin-bottom:8px">
+ <p style="font-size:13px;color:var(--fg-muted);margin-bottom:8px">
  给重要版本起个名字（"v1 终稿"、"v2 修对话"等），方便以后找回。
  </p>
  <div class="form-row">
@@ -641,7 +641,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  <button class="modal-close" id="vocab-close">×</button>
  </div>
  <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
- <div style="color:var(--fg-muted);font-size:11.5px;margin-bottom:10px;line-height:1.6">
+ <div style="color:var(--fg-muted);font-size:12px;margin-bottom:10px;line-height:1.6">
  检查两件事：
  <br>① 每个角色在各章节里用了什么称呼（避免 A 章"孙总" / B 章"老孙" 乱用）
  <br>② 同一人用不同敬称（"X总 / X老板 / X先生"）出现在不同章节
@@ -663,14 +663,14 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  <div class="modal-body">
  <div style="margin-bottom:8px">
- <div style="font-size:10.5px;color:var(--fg-dim);margin-bottom:3px">选中的文本</div>
+ <div style="font-size:11px;color:var(--fg-dim);margin-bottom:3px">选中的文本</div>
  <div id="cm-snippet" style="padding:8px 10px;background:color-mix(in srgb, var(--accent) 8%, transparent);border-left:2px solid var(--accent);border-radius:0 4px 4px 0;font-size:12px;color:var(--fg);font-family:var(--font-serif,serif)"></div>
  </div>
  <div class="form-row">
  <label>批注内容</label>
  <textarea id="cm-body" rows="4" placeholder="如：动机不清，建议补充"和第十回矛盾" style="width:100%;font-family:inherit"></textarea>
  </div>
- <div style="margin-top:6px;font-size:10.5px;color:var(--fg-dim)">
+ <div style="margin-top:6px;font-size:11px;color:var(--fg-dim)">
  选区字符 index：<span id="cm-pos">-</span> · 按 Ctrl+Enter 提交
  </div>
  </div>
@@ -698,10 +698,10 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  <div style="border-top:1px solid var(--border-soft, color-mix(in srgb, var(--fg-dim) 12%, transparent));padding-top:12px">
  <p style="font-size:12px;color:var(--fg-muted);margin-bottom:8px"> 导入 .novelpack（会自动备份当前数据到 data/backups/）</p>
- <input type="file" id="mg-file" accept=".novelpack,.zip" style="font-size:11.5px;width:100%;padding:6px;background:var(--bg-elevated);color:var(--fg);border:1px solid var(--border-glass);border-radius:4px" />
+ <input type="file" id="mg-file" accept=".novelpack,.zip" style="font-size:12px;width:100%;padding:6px;background:var(--bg-elevated);color:var(--fg);border:1px solid var(--border-glass);border-radius:4px" />
  <button class="btn" id="mg-import" style="margin-top:8px;width:100%"> 导入并恢复</button>
  </div>
- <div id="mg-msg" style="margin-top:10px;font-size:11.5px;min-height:14px"></div>
+ <div id="mg-msg" style="margin-top:10px;font-size:12px;min-height:14px"></div>
  </div>
  </div>
  </div>
@@ -743,7 +743,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  <label>模型</label>
  <input type="text" id="ai-setup-model" placeholder="deepseek-chat" style="width:100%" />
  </div>
- <div id="ai-setup-msg" style="font-size:11.5px;min-height:14px"></div>
+ <div id="ai-setup-msg" style="font-size:12px;min-height:14px"></div>
  </div>
  <div class="modal-footer">
  <button class="btn" id="ai-setup-skip" style="display:none">稍后</button>
@@ -763,8 +763,27 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
  <div id="review-summary" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap"></div>
- <div id="review-legend" style="margin-bottom:10px;font-size:10.5px;color:var(--fg-muted);display:flex;gap:10px;flex-wrap:wrap"></div>
+ <div id="review-legend" style="margin-bottom:10px;font-size:11px;color:var(--fg-muted);display:flex;gap:10px;flex-wrap:wrap"></div>
  <div id="review-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px"></div>
+ </div>
+ </div>
+ </div>
+
+ <!-- ===== AI 评审详情 ===== -->
+ <div id="review-detail-modal" class="modal hidden">
+ <div class="modal-mask"></div>
+ <div class="modal-content modal-2xl">
+ <div class="modal-header">
+ <h2> <span id="revd-title">AI 评审</span></h2>
+ <button class="modal-close" id="revd-close">×</button>
+ </div>
+ <div class="modal-body" style="max-height:70vh;overflow-y:auto;">
+ <div id="revd-body"><p style="color:var(--fg-muted);font-size:12px">加载中…</p></div>
+ </div>
+ <div class="modal-footer">
+ <button class="btn small" id="revd-again" title="重新让 AI 评审本章（会覆盖上次结果）"> 重新评审</button>
+ <button class="btn small" id="revd-goto" title="跳转到编辑器查看本章"> 去编辑器</button>
+ <button class="btn primary" id="revd-fix" title="把勾选的问题/建议拼成指令，跳转编辑器后用 AI 修改"> 用 AI 修改选中项 →</button>
  </div>
  </div>
  </div>
@@ -790,15 +809,15 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  <div class="modal-header">
  <h2> 今日编辑简报</h2>
  <div style="display:flex;gap:6px;align-items:center">
- <span id="brief-cache-tag" class="placeholder" style="font-size:10.5px;display:none">缓存</span>
- <button class="btn small" id="brief-refresh" title="强制重算 (跳过缓存)" style="font-size:10.5px">↻ 重算</button>
+ <span id="brief-cache-tag" class="placeholder" style="font-size:11px;display:none">缓存</span>
+ <button class="btn small" id="brief-refresh" title="强制重算 (跳过缓存)" style="font-size:11px">↻ 重算</button>
  <button class="modal-close" id="brief-close">×</button>
  </div>
  </div>
  <div class="modal-body" style="max-height:76vh;overflow-y:auto;">
  <div id="brief-loading" class="placeholder" style="text-align:center;padding:24px">
  <div>加载中…</div>
- <div style="font-size:10.5px;color:var(--fg-dim);margin-top:4px">硬关联即时返回, LLM 建议 5-10s, 疑点扫描 &lt;1s</div>
+ <div style="font-size:11px;color:var(--fg-dim);margin-top:4px">硬关联即时返回, LLM 建议 5-10s, 疑点扫描 &lt;1s</div>
  </div>
  <div id="brief-content" style="display:none">
  <!-- 三段折叠区: 硬关联 / LLM 建议 / 自动疑点 -->
@@ -814,7 +833,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  <summary> 自动疑点 (信息泄漏 / 未登记人名 / 时间矛盾 / 风格违例)</summary>
  <div id="brief-issues" style="padding:8px 0"></div>
  </details>
- <div id="brief-elapsed" style="font-size:10.5px;color:var(--fg-dim);text-align:right;margin-top:8px"></div>
+ <div id="brief-elapsed" style="font-size:11px;color:var(--fg-dim);text-align:right;margin-top:8px"></div>
  </div>
  </div>
  </div>

@@ -981,7 +981,7 @@ function renderOutlineResult(result) {
  if (!chapters.length) { $("#nn-outline-result").innerHTML = '<p class="placeholder">大纲为空</p>'; return; }
  let html = `<div style="max-height:400px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px">`;
  for (const ch of chapters) {
- const hook = ch.hook ? `<span class="badge" style="background:color-mix(in srgb, var(--warning) 15%, transparent);color:var(--warning);font-size:9px;margin-left:6px">钩子: ${ESC(ch.hook.slice(0,30))}</span>` : "";
+ const hook = ch.hook ? `<span class="badge" style="background:color-mix(in srgb, var(--warning) 15%, transparent);color:var(--warning);font-size:11px;margin-left:6px">钩子: ${ESC(ch.hook.slice(0,30))}</span>` : "";
  html += `<div class="list-row" style="padding:6px 10px">
  <div class="lr-title" style="font-size:12px">第${ch.idx}章 ${ESC(ch.title||"")}${hook}</div>
  <div class="lr-meta" style="font-size:11px">${ESC((ch.summary||"").slice(0,100))}</div>
@@ -1277,7 +1277,7 @@ function renderCharactersList(chars) {
 }
 
 function renderCharRow(c) {
- const mbtiTag = c.mbti ? `<span class="opt-badge" style="background:var(--bg-elevated);color:var(--accent);margin-left:6px">${ESC(c.mbti)}</span>` : '<span style="color:var(--danger);font-size:10px;margin-left:6px">未标 MBTI</span>';
+ const mbtiTag = c.mbti ? `<span class="opt-badge" style="background:var(--bg-elevated);color:var(--accent);margin-left:6px">${ESC(c.mbti)}</span>` : '<span style="color:var(--danger);font-size:11px;margin-left:6px">未标 MBTI</span>';
  let statusTag = "";
  if (c.status) {
  let sColor = "var(--fg-muted)";
@@ -1287,7 +1287,7 @@ function renderCharRow(c) {
  statusTag = `<span class="badge" style="background:color-mix(in srgb, ${sColor} 15%, transparent);color:${sColor};margin-left:6px">${ESC(c.status)}</span>`;
  }
  // 出场次数（>0 时显示）
- const appTag = c.appearance_count > 0 ? `<span style="color:var(--fg-dim);font-size:10px;margin-left:6px">出场${c.appearance_count}次</span>` : "";
+ const appTag = c.appearance_count > 0 ? `<span style="color:var(--fg-dim);font-size:11px;margin-left:6px">出场${c.appearance_count}次</span>` : "";
  return `<div class="list-row" data-id="${c.id}">
  <div class="lr-title">${ESC(c.name)} <span class="badge ${c.role || 'supporting'}">${c.role || '?'}</span>${mbtiTag}${statusTag}${appTag}</div>
  <div class="lr-meta">${ESC((c.basic_info || "").slice(0, 60))}</div>
@@ -1323,7 +1323,7 @@ function renderCharacterProfile(profile) {
  <h4>${ESC(c.name)} ${statusBadge}</h4>
  <div class="v">
  <span class="badge ${c.role || 'supporting'}">${c.role || '?'}</span>
- ${c.mbti ? `<span class="opt-badge" style="background:var(--bg-elevated);color:var(--accent)">${c.mbti}</span>` : '<span style="color:var(--danger);font-size:10px">未标 MBTI</span>'}
+ ${c.mbti ? `<span class="opt-badge" style="background:var(--bg-elevated);color:var(--accent)">${c.mbti}</span>` : '<span style="color:var(--danger);font-size:11px">未标 MBTI</span>'}
  ${c.aliases?.length ? `<span style="color:var(--fg-muted);font-size:11px">别号：${c.aliases.map(ESC).join("、")}</span>` : ""}
  </div>
  </div>`;
@@ -1478,7 +1478,7 @@ async function renderMbti() {
  let html = `<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg-elevated);border-radius:6px">已标注 <b>${withMbti}</b> / ${chars.length} 人 ${withMbti < chars.length ? '<span style="color:var(--warning)">· 建议把主要人物都标了</span>' : '<span style="color:var(--success)">· ✓ 全部已标</span>'}</div>`;
  html += `<div class="list-card">`;
  for (const c of chars) {
- const mbtiTag = c.mbti ? `<span class="opt-badge" style="background:var(--bg-elevated);color:var(--accent)">${c.mbti}</span>` : '<span style="color:var(--danger);font-size:10px">! 未标</span>';
+ const mbtiTag = c.mbti ? `<span class="opt-badge" style="background:var(--bg-elevated);color:var(--accent)">${c.mbti}</span>` : '<span style="color:var(--danger);font-size:11px">! 未标</span>';
  html += `<div class="list-row">
  <div class="lr-title">${ESC(c.name)} <span class="badge ${c.role || 'supporting'}">${c.role || '?'}</span> ${mbtiTag}</div>
  <div class="lr-meta"><button class="btn small" data-set-mbti="${c.id}">设置 MBTI</button></div>
@@ -1614,6 +1614,8 @@ function gotoEditorAndLoad(idx) {
  if (!dirty) STATE_EDITOR.chapterIdx = idx;
  goto("editor");
  setTimeout(() => { if (STATE_EDITOR.chapterIdx !== idx) loadEditorChapter(idx); }, 250);
+ // 已在编辑器且就是本章：不重载，等视图切换后直接注入待处理指令
+ setTimeout(() => { if (STATE_EDITOR.chapterIdx === idx) _applyPendingAiPrompt(); }, 500);
 }
 
 async function loadEditorChapter(idx) {
@@ -1712,13 +1714,14 @@ async function loadEditorChapter(idx) {
  if (_curChap) _curChap.textContent = ch.idx;
  updateEditorStats();
  setEditorStatus("● 已保存", false);
+ _applyPendingAiPrompt(); // 评审转修改：正文就绪后再注入指令框
  // B-优22: 重渲染左侧章列表 (高亮当前章节)
  renderEditorChapterList();
  // 清诊断 + 重渲染
  const issuesEl = $("#ed-issues");
  issuesEl.innerHTML = "";
  if (r.consistency && r.consistency.issues && r.consistency.issues.length) {
- issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:10px">上次扫描: ${r.consistency.issues.length} 个问题</div>`;
+ issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:11px">上次扫描: ${r.consistency.issues.length} 个问题</div>`;
  r.consistency.issues.forEach(it => {
  issuesEl.insertAdjacentHTML("beforeend",
  `<div class="ed-issue-mini ${it.severity||'low'}">
@@ -1727,7 +1730,7 @@ async function loadEditorChapter(idx) {
  </div>`);
  });
  } else if (r.threads && r.threads.length) {
- issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:10px">本章衔接 ${r.threads.length} 条线</div>`;
+ issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:11px">本章衔接 ${r.threads.length} 条线</div>`;
  } else {
  issuesEl.innerHTML = '<p style="color:var(--fg-dim);font-size:11px">未扫描。点"扫描本章"运行。</p>';
  }
@@ -2240,7 +2243,7 @@ async function editorAnalyze() {
  const r = await API.post(`/editor/chapter/${idx}/analyze`, {text});
  const sev = r.by_severity || {}; // E1: 后端漏返 by_severity 不再抛
  const high = sev.high || 0, med = sev.medium || 0, low = sev.low || 0;
- issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:10px">扫描结果：●${high} ●${med} ●${low}</div>`;
+ issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:11px">扫描结果：●${high} ●${med} ●${low}</div>`;
  if (!r.issues.length) {
  issuesEl.innerHTML += '<p style="color:var(--success);font-size:11px">✓ 无问题</p>';
  } else {
@@ -2292,7 +2295,7 @@ function renderBrief(payload) {
  // 上一章未完成动作
  if (hard.prev_unfinished_action) {
  hardHTML += `<div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-elevated);border-left:3px solid var(--warning);border-radius:4px">
- <div style="font-size:10.5px;color:var(--fg-dim);margin-bottom:2px"> 上一章未完成动作</div>
+ <div style="font-size:11px;color:var(--fg-dim);margin-bottom:2px"> 上一章未完成动作</div>
  <div style="font-size:12px;line-height:1.6">${ESC(hard.prev_unfinished_action)}</div>
  </div>`;
  } else {
@@ -2302,7 +2305,7 @@ function renderBrief(payload) {
  const tp = hard.timeline_position || {};
  if (tp.chapter_idx) {
  hardHTML += `<div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-elevated);border-left:3px solid var(--accent);border-radius:4px">
- <div style="font-size:10.5px;color:var(--fg-dim);margin-bottom:2px"> 本章时间线位置</div>
+ <div style="font-size:11px;color:var(--fg-dim);margin-bottom:2px"> 本章时间线位置</div>
  <div style="font-size:12px">第 <b>${tp.chapter_idx}</b> 回 / 共 ${tp.total} 回 (<b>${tp.pct}%</b> 进度)</div>
  <div style="font-size:11px;color:var(--fg-muted);margin-top:2px">故事内时间: ${tp.story_time_range ? `[${tp.story_time_range[0]}, ${tp.story_time_range[1]}]` : "未设"}</div>
  </div>`;
@@ -2311,13 +2314,13 @@ function renderBrief(payload) {
  const chars = hard.related_characters || [];
  if (chars.length) {
  hardHTML += `<div style="margin-bottom:10px">
- <div style="font-size:10.5px;color:var(--fg-dim);margin-bottom:4px"> 涉及人物 (${chars.length})</div>`;
+ <div style="font-size:11px;color:var(--fg-dim);margin-bottom:4px"> 涉及人物 (${chars.length})</div>`;
  chars.forEach(c => {
  const recent = (c.recent_appearances || []).slice(0, 3).map(r => `第${r.chapter_idx}回`).join(", ") || "无最近出场";
- hardHTML += `<div style="padding:4px 8px;background:var(--bg-elevated);border-radius:4px;margin-bottom:4px;font-size:11.5px">
+ hardHTML += `<div style="padding:4px 8px;background:var(--bg-elevated);border-radius:4px;margin-bottom:4px;font-size:12px">
  <span style="color:var(--accent)">${ESC(c.name)}</span>
- <span style="color:var(--fg-dim);font-size:10.5px"> · ${ESC(c.role || "—")} · ${ESC(c.mbti || "—")}</span>
- <span style="color:var(--fg-dim);font-size:10px;margin-left:6px">最近: ${ESC(recent)}</span>
+ <span style="color:var(--fg-dim);font-size:11px"> · ${ESC(c.role || "—")} · ${ESC(c.mbti || "—")}</span>
+ <span style="color:var(--fg-dim);font-size:11px;margin-left:6px">最近: ${ESC(recent)}</span>
  </div>`;
  });
  hardHTML += `</div>`;
@@ -2326,11 +2329,11 @@ function renderBrief(payload) {
  const threads = hard.related_threads || [];
  if (threads.length) {
  hardHTML += `<div>
- <div style="font-size:10.5px;color:var(--fg-dim);margin-bottom:4px"> 关联伏笔 (${threads.length})</div>`;
+ <div style="font-size:11px;color:var(--fg-dim);margin-bottom:4px"> 关联伏笔 (${threads.length})</div>`;
  threads.forEach(t => {
  const relBadge = {planted: "● 新种", payoff: "● 揭晓", other: "○ 关联"}[t.relation] || "○";
- hardHTML += `<div style="padding:4px 8px;background:var(--bg-elevated);border-radius:4px;margin-bottom:4px;font-size:11.5px">
- <span class="badge ${ESC(t.status)}" style="font-size:10px">${ESC(t.status)}</span>
+ hardHTML += `<div style="padding:4px 8px;background:var(--bg-elevated);border-radius:4px;margin-bottom:4px;font-size:12px">
+ <span class="badge ${ESC(t.status)}" style="font-size:11px">${ESC(t.status)}</span>
  ${relBadge} <span style="color:var(--accent)">${ESC(t.title)}</span>
  <div style="color:var(--fg-muted);font-size:11px;margin-top:2px">${ESC(t.description || "")}</div>
  </div>`;
@@ -2343,14 +2346,14 @@ function renderBrief(payload) {
  const llm = payload.llm_suggestions || [];
  let llmHTML = "";
  if (!llm.length) {
- llmHTML = '<p class="placeholder" style="font-size:11.5px">（LLM 暂不可用 — 可能未配 API key，或调用失败）</p>';
+ llmHTML = '<p class="placeholder" style="font-size:12px">（LLM 暂不可用 — 可能未配 API key，或调用失败）</p>';
  } else {
  const typeIcon = {pacing: "", character: "", dialogue: "", consistency: "", "_meta": "!"};
  llm.forEach(s => {
  const t = s.type || "其他";
  const icon = typeIcon[t] || "";
  llmHTML += `<div style="padding:8px 10px;background:var(--bg-elevated);border-left:3px solid var(--accent-soft);border-radius:4px;margin-bottom:6px;font-size:12px;line-height:1.6">
- <span style="font-size:10.5px;color:var(--fg-dim);margin-right:6px">${icon} ${ESC(t)}</span>
+ <span style="font-size:11px;color:var(--fg-dim);margin-right:6px">${icon} ${ESC(t)}</span>
  ${ESC(s.suggestion || "")}
  </div>`;
  });
@@ -2362,16 +2365,16 @@ function renderBrief(payload) {
  let issHTML = "";
  const sev = issues.by_severity || {};
  if (!issues.n_total) {
- issHTML = '<p class="placeholder" style="font-size:11.5px;color:var(--success)">✓ 规则引擎未发现疑点</p>';
+ issHTML = '<p class="placeholder" style="font-size:12px;color:var(--success)">✓ 规则引擎未发现疑点</p>';
  } else {
- issHTML = `<div style="margin-bottom:8px;font-size:10.5px;color:var(--fg-dim)">
+ issHTML = `<div style="margin-bottom:8px;font-size:11px;color:var(--fg-dim)">
  总计 <b>${issues.n_total}</b> 条 · ●${sev.high||0} ●${sev.medium||0} ●${sev.low||0}
  </div>`;
  issues.items.forEach(it => {
  const cls = it.severity || "low";
- const fix = it.fix_suggestion ? `<div style="color:var(--fg-muted);font-size:10.5px;margin-top:2px"> ${ESC(it.fix_suggestion)}</div>` : "";
- issHTML += `<div style="padding:6px 10px;background:var(--bg-elevated);border-left:3px solid var(--${cls==='high'?'danger':cls==='medium'?'warning':'success'});border-radius:4px;margin-bottom:6px;font-size:11.5px">
- <span style="font-size:10px;color:var(--fg-dim)">[${ESC(cls)}] ${ESC(it.category || '')}</span>
+ const fix = it.fix_suggestion ? `<div style="color:var(--fg-muted);font-size:11px;margin-top:2px"> ${ESC(it.fix_suggestion)}</div>` : "";
+ issHTML += `<div style="padding:6px 10px;background:var(--bg-elevated);border-left:3px solid var(--${cls==='high'?'danger':cls==='medium'?'warning':'success'});border-radius:4px;margin-bottom:6px;font-size:12px">
+ <span style="font-size:11px;color:var(--fg-dim)">[${ESC(cls)}] ${ESC(it.category || '')}</span>
  <div style="margin-top:2px;line-height:1.5">${ESC(it.explanation || '')}</div>
  ${fix}
  </div>`;
@@ -3995,7 +3998,7 @@ function renderQuickReport(r) {
  const info = ibc[k] || { count: 0, high: 0 };
  const color = info.count === 0 ? "var(--success)" : info.high > 0 ? "var(--danger)" : info.count > 5 ? "var(--danger)" : getCssVar("--warning");
  html += `<div class="dash-card" style="padding:10px">
- <div class="card-title" style="font-size:10px">${label}</div>
+ <div class="card-title" style="font-size:11px">${label}</div>
  <div class="big-num" style="font-size:24px;color:${color}">${info.count}</div>
  <div class="sub">${info.high ? '● '+info.high+' 高优' : (info.count>0?'有问题':'✓ 通过')}</div>
  </div>`;
@@ -4139,7 +4142,7 @@ async function renderStructure() {
  <div style="font-size:20px;color:var(--fg);font-weight:600;margin-top:2px">${info.n_events ?? 0}</div>
  <div style="font-size:11px;color:var(--fg-muted)">事件 · imp ${info.importance_avg ?? "-"}</div>
  <div style="font-size:11px;color:var(--fg-muted)">pos ${(info.position_range || [0,0]).join("-")}</div>
- <div style="font-size:10px;color:var(--fg-dim);margin-top:4px">埋 ${info.n_threads_planted ?? 0} · 揭 ${info.n_threads_payoff ?? 0}</div>
+ <div style="font-size:11px;color:var(--fg-dim);margin-top:4px">埋 ${info.n_threads_planted ?? 0} · 揭 ${info.n_threads_payoff ?? 0}</div>
  </div>`;
  }
  // 3 幕结构
@@ -4442,7 +4445,7 @@ function renderStyleScanResultHTML(data) {
  const col = c.distance > 2 ? "var(--danger)" : c.distance > 1.2 ? getCssVar("--warning") : "var(--success)";
  html += `<div style="flex:1;height:${h}px;background:${col};border-radius:2px 2px 0 0" title="第${c.idx}章: ${c.distance}"></div>`;
  }
- html += `</div><div style="display:flex;gap:4px;font-size:9px;color:var(--fg-dim)">`;
+ html += `</div><div style="display:flex;gap:4px;font-size:11px;color:var(--fg-dim)">`;
  for (const c of curve) html += `<div style="flex:1;text-align:center">${c.idx}</div>`;
  html += `</div>`;
  }
@@ -6425,7 +6428,7 @@ async function importNovelpack() {
  html += `· ${m.chapters_count} 章 / ${m.characters_count} 角色 / ${m.events_count} 事件 / ${m.total_words?.toLocaleString() || 0} 字<br>`;
  }
  if (j.backup && j.backup.length) {
- html += `<span style="color:var(--fg-dim);font-size:10.5px">备份: ${j.backup.length} 个文件在 data/backups/</span><br>`;
+ html += `<span style="color:var(--fg-dim);font-size:11px">备份: ${j.backup.length} 个文件在 data/backups/</span><br>`;
  }
  html += `<br><span style="color:var(--fg-dim);font-size:11px">3 秒后自动刷新页面…</span>`;
  $("#mg-msg").innerHTML = html;
@@ -6528,7 +6531,7 @@ function renderVocabData(r) {
  </div>
  `;
  } else {
- $("#vocab-honorifics").innerHTML = '<div class="vocab-section" style="color:var(--fg-dim);font-size:11.5px">✓ 没发现同人不同敬称的情况</div>';
+ $("#vocab-honorifics").innerHTML = '<div class="vocab-section" style="color:var(--fg-dim);font-size:12px">✓ 没发现同人不同敬称的情况</div>';
  }
  // 角色出场
  if (r.role_usage.length) {
@@ -6577,7 +6580,7 @@ function renderVocabData(r) {
  </div>
  `;
  } else {
- $("#vocab-roles").innerHTML = '<div class="vocab-section" style="color:var(--fg-dim);font-size:11.5px">没有角色数据</div>';
+ $("#vocab-roles").innerHTML = '<div class="vocab-section" style="color:var(--fg-dim);font-size:12px">没有角色数据</div>';
  }
 }
 
@@ -6747,6 +6750,15 @@ function renderReviewData(r) {
  <div class="review-stat-label">✓ 终审通过率</div>
  </div>
  `);
+ // AI 评审均值
+ const reviewed = r.chapters.filter(c => c.ai_review_score != null);
+ const avgScore = reviewed.length > 0 ? Math.round(reviewed.reduce((s, c) => s + c.ai_review_score, 0) / reviewed.length) : null;
+ $("#review-summary").insertAdjacentHTML("beforeend", `
+ <div class="review-stat st-review">
+ <div class="review-stat-num">${avgScore != null ? avgScore + "分" : "—"}</div>
+ <div class="review-stat-label"> AI 评审均分 · ${reviewed.length}/${r.chapters.length} 章</div>
+ </div>
+ `);
  // legend
  $("#review-legend").innerHTML = order.map(s => `
  <span class="review-legend-item"><span class="review-legend-dot st-${s}"></span>${REVIEW_STATUS_LABEL[s]}</span>
@@ -6758,14 +6770,177 @@ function renderReviewData(r) {
  if (c.resolved_comments > 0) badges.push(`<span class="badge resolved">${c.resolved_comments} 已解决</span>`);
  if (c.consistency_passed === true) badges.push(`<span class="badge cons-pass">✓ 一致</span>`);
  if (c.consistency_passed === false) badges.push(`<span class="badge cons-fail">✕ 一致</span>`);
+ if (c.ai_review_score != null) {
+ const sc = Math.round(c.ai_review_score);
+ const cls = sc >= 80 ? "rev-good" : (sc >= 60 ? "rev-mid" : "rev-bad");
+ badges.push(`<span class="badge rev-score ${cls}" title="AI 评审均分 ${sc} 分${c.ai_review_high ? ` · ${c.ai_review_high} 个高严重度问题` : ""}"> AI ${sc}分</span>`);
+ }
  return `
  <div class="review-cell st-${c.status}" onclick="gotoEditorAndLoad(${c.idx})">
  <div class="review-cell-idx">第 ${c.idx} 回 · ${REVIEW_STATUS_LABEL_SHORT[c.status]}</div>
  <div class="review-cell-title" title="${ESC(c.title)}">${ESC(c.title || '')}</div>
  <div class="review-cell-meta">${c.word_count.toLocaleString()} 字 · ${badges.join("")}</div>
+ <div class="review-cell-actions">
+ <button class="btn small" onclick="event.stopPropagation();openReviewDetail(${c.idx})" title="AI 多维度评审本章"> AI 评审</button>
+ </div>
  </div>
  `;
  }).join("");
+}
+
+// =================== AI 评审详情（审稿看板） ===================
+let REVD_CURRENT_IDX = null;
+let REVD_CURRENT_REV = null; // 当前显示的评审数据（供"用 AI 修改选中项"拼指令）
+let _pendingAiPrompt = null; // 评审转修改：跳转编辑器后待注入的 AI 指令
+
+async function openReviewDetail(idx) {
+ REVD_CURRENT_IDX = idx;
+ const modal = $("#review-detail-modal");
+ if (!modal) return;
+ modal.classList.remove("hidden");
+ $("#revd-close").onclick = () => modal.classList.add("hidden");
+ $("#review-detail-modal .modal-mask").onclick = () => modal.classList.add("hidden");
+ $("#revd-goto").onclick = () => {
+ modal.classList.add("hidden");
+ gotoEditorAndLoad(idx);
+ };
+ $("#revd-again").onclick = () => runAiReview(idx);
+ $("#revd-fix").onclick = () => {
+ // 把勾选的问题/建议拼成一条 AI 修改指令，跳转编辑器预填
+ const instr = collectReviewFixInstruction();
+ if (!instr) {
+ showToast("请先勾选要修改的问题或建议", "warning");
+ return;
+ }
+ modal.classList.add("hidden");
+ _pendingAiPrompt = instr; // 编辑器加载完成后注入指令框
+ gotoEditorAndLoad(idx);
+ };
+ $("#revd-title").textContent = `AI 评审 · 第 ${idx} 回`;
+ $("#revd-body").innerHTML = '<p style="color:var(--fg-muted);font-size:12px">加载中…</p>';
+ try {
+ const r = await API.get(`/editor/chapter/${idx}/ai-review`);
+ if (r.review) {
+ renderReviewDetail(r.review);
+ } else {
+ REVD_CURRENT_REV = null;
+ $("#revd-body").innerHTML = `
+ <div class="revd-empty">
+ <p style="color:var(--fg-muted);font-size:13px">本章还没有 AI 评审记录。</p>
+ <p style="color:var(--fg-dim);font-size:12px">点击下方"AI 评审"按钮，让 AI 从文笔 / 逻辑 / 人物 / 节奏 / 伏笔五个维度评审本章。</p>
+ </div>`;
+ }
+ } catch (e) {
+ $("#revd-body").innerHTML = `<p style="color:var(--danger)">加载失败: ${ESC(e.message || e)}</p>`;
+ }
+}
+
+/** 把评审勾选的问题/建议拼成一条 AI 修改指令（问题在前，建议在后） */
+function collectReviewFixInstruction() {
+ const rev = REVD_CURRENT_REV;
+ if (!rev) return "";
+ const issues = (rev.issues || []).map((it, i) => ({it, i})).filter(o => {
+ const cb = document.querySelector(`.revd-pick[data-kind="issue"][data-i="${o.i}"]`);
+ return cb && cb.checked;
+ });
+ const sugs = (rev.suggestions || []).map((s, i) => ({s, i})).filter(o => {
+ const cb = document.querySelector(`.revd-pick[data-kind="suggestion"][data-i="${o.i}"]`);
+ return cb && cb.checked;
+ });
+ if (!issues.length && !sugs.length) return "";
+ const lines = [];
+ if (issues.length) {
+ lines.push("根据 AI 评审发现的问题逐一修改：");
+ issues.forEach((o, k) => {
+ const it = o.it;
+ const tag = it.severity === "high" ? "严重" : (it.severity === "medium" ? "中等" : "轻微");
+ lines.push(`${k + 1}. [${tag}] ${it.text}`);
+ });
+ }
+ if (sugs.length) {
+ if (issues.length) lines.push("");
+ lines.push("优先参考以下修改建议（与问题对应，可灵活调整）：");
+ sugs.forEach((o, k) => lines.push(`${k + 1}. ${o.s}`));
+ }
+ lines.push("");
+ lines.push("请逐项处理，直接输出修改后的全文（或按我的确认方式给出修改）。");
+ return lines.join("\n");
+}
+
+// 编辑器加载完成后，若有待注入的评审指令则填入指令框并聚焦
+function _applyPendingAiPrompt() {
+ if (!_pendingAiPrompt) return;
+ const inp = document.getElementById("ed-input");
+ if (!inp) return;
+ inp.value = _pendingAiPrompt;
+ _pendingAiPrompt = null;
+ // 切到 AI tab 并聚焦
+ const aiTab = document.getElementById("ed-tab-ai");
+ if (aiTab && !aiTab.classList.contains("active")) aiTab.click();
+ setTimeout(() => { inp.focus(); inp.select(); }, 60);
+ showToast("评审意见已填入指令框，确认后发送（Ctrl+Enter）", "info", 4000);
+}
+
+function renderReviewDetail(rev) {
+ const score = Math.round(rev.overall_score);
+ const scoreCls = score >= 80 ? "rev-good" : (score >= 60 ? "rev-mid" : "rev-bad");
+ const dims = (rev.dimensions || []).map(d => {
+ const s = Math.round(d.score);
+ const pct = Math.max(4, Math.round(d.score * 10));
+ const cls = d.score >= 8 ? "rev-good" : (d.score >= 6 ? "rev-mid" : "rev-bad");
+ return `
+ <div class="revd-dim">
+ <div class="revd-dim-head"><span>${ESC(d.name || "")}</span><span class="revd-dim-score ${cls}">${s}分</span></div>
+ <div class="revd-dim-bar"><div class="revd-dim-fill ${cls}" style="width:${pct}%"></div></div>
+ <div class="revd-dim-comment">${ESC(d.comment || "")}</div>
+ </div>`;
+ }).join("");
+ const strengths = (rev.strengths || []).map(s => `<li>${ESC(s)}</li>`).join("");
+ // 问题带勾选框（默认全选，可取消不想改的）
+ const issues = (rev.issues || []).map((it, i) => {
+ const cls = it.severity === "high" ? "issue-high" : (it.severity === "medium" ? "issue-mid" : "issue-low");
+ const tag = it.severity === "high" ? "高" : (it.severity === "medium" ? "中" : "低");
+ return `<li class="revd-issue ${cls}"><label class="revd-pick-row"><input type="checkbox" class="revd-pick" data-kind="issue" data-i="${i}" checked><span class="revd-issue-tag">${tag}</span><span>${ESC(it.text || "")}</span></label></li>`;
+ }).join("");
+ // 建议带勾选框（默认全选）
+ const suggestions = (rev.suggestions || []).map((s, i) => `<li><label class="revd-pick-row"><input type="checkbox" class="revd-pick" data-kind="suggestion" data-i="${i}" checked><span>${ESC(s)}</span></label></li>`).join("");
+ const when = rev.created_at ? new Date(rev.created_at * 1000).toLocaleString() : "";
+ REVD_CURRENT_REV = rev; // 供"用 AI 修改选中项"拼指令
+ $("#revd-body").innerHTML = `
+ <div class="revd-score-row">
+ <div class="revd-big-score ${scoreCls}">${score}<span>分</span></div>
+ <div class="revd-overall">
+ <div class="revd-overall-comment">${ESC(rev.overall_comment || "")}</div>
+ ${when ? `<div class="revd-time">评审时间 ${ESC(when)}</div>` : ""}
+ </div>
+ </div>
+ ${dims ? `<div class="revd-section"><h4> 维度评分</h4>${dims}</div>` : ""}
+ ${strengths ? `<div class="revd-section"><h4> 亮点</h4><ul class="revd-list revd-strengths">${strengths}</ul></div>` : ""}
+ ${issues ? `<div class="revd-section"><h4> 问题</h4><ul class="revd-list">${issues}</ul></div>` : ""}
+ ${suggestions ? `<div class="revd-section"><h4> 修改建议</h4><ul class="revd-list revd-suggestions">${suggestions}</ul></div>` : ""}
+ `;
+}
+
+async function runAiReview(idx) {
+ const body = $("#revd-body");
+ const prev = body.innerHTML;
+ body.innerHTML = '<p style="color:var(--info);font-size:12px">AI 正在评审本章（需要 10~30 秒）…</p>';
+ try {
+ const r = await API.post(`/editor/chapter/${idx}/ai-review`, null, LLM_TIMEOUT_MS);
+ renderReviewDetail(r.review);
+ if (typeof showToast === "function") showToast(`第 ${idx} 回评审完成: ${Math.round(r.review.overall_score)} 分`);
+ } catch (e) {
+ body.innerHTML = `<p style="color:var(--danger);font-size:12px">评审失败: ${ESC(e.message || e)}</p>
+ <div style="margin-top:10px">
+ <button class="btn small" onclick="runAiReview(${idx})"> 重试</button>
+ <button class="btn small" onclick="REVD_CURRENT_IDX != null && (openReviewDetail(REVD_CURRENT_IDX))"> 返回</button>
+ </div>`;
+ }
+ // 刷新看板徽章（后台重新拉，失败不阻塞）
+ try {
+ const r = await API.get("/editor/review-status");
+ if ($("#review-grid")) renderReviewData(r);
+ } catch (e) { /* 忽略：看板未开时无需刷新 */ }
 }
 
 // =================== 命令面板 (Ctrl+K) ===================

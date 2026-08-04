@@ -221,6 +221,21 @@ CREATE TABLE IF NOT EXISTS consistency_report (
 );
 CREATE INDEX IF NOT EXISTS idx_cr_chapter ON consistency_report(chapter_id);
 
+-- AI 多维度评审记录（审稿看板）
+CREATE TABLE IF NOT EXISTS chapter_review (
+    id INTEGER PRIMARY KEY,
+    chapter_id INTEGER NOT NULL,
+    overall_score REAL,            -- 0~100 总分
+    overall_comment TEXT,          -- 总评一句话
+    dimensions TEXT,               -- JSON: [{name, score(0-10), comment}]
+    strengths TEXT,                -- JSON: 亮点列表
+    issues TEXT,                   -- JSON: [{severity, text}]
+    suggestions TEXT,              -- JSON: 可操作修改建议
+    raw_response TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rev_chapter ON chapter_review(chapter_id);
+
 -- 风格指南（编辑自定义的写作规则，用于违例检测 + AI 改稿 prompt 注入）
 CREATE TABLE IF NOT EXISTS style_rule (
     id INTEGER PRIMARY KEY,

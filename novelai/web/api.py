@@ -324,7 +324,7 @@ def api_outline_generate(req: dict) -> dict:
     if not ai.ready:
         raise HTTPException(400, "AI 未配置 API key")
     target = _safe_int(req.get("target_chapters"), 30)
-    target = max(3, min(200, target))  # 3-200 章
+    target = max(3, min(500, target))  # 3-500 章
     db = get_db()
     try:
         data = writer.generate_outline(db, ai, target_chapters=target)

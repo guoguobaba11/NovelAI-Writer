@@ -35,6 +35,9 @@ OUTLINE_USER_TEMPLATE = """请根据以下项目信息生成本书的【章节�
 【视角】
 {pov_mode}
 
+【故事内时间单位】
+{time_unit}
+
 【目标总章节数】
 {target_chapters}
 

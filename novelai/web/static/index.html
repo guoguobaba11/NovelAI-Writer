@@ -7,7 +7,7 @@
  <!-- 不依赖外网字体：纯系统字体 fallback（Inter / PingFang SC / 微软雅黑 / Songti SC / Consolas 等），
  避免 webview 启动时因 fonts.googleapis.com 阻塞而黑屏。-->
  <!-- B-新190: 加 ?v= 时间戳强破刷新, 防 PyWebView cache 旧 CSS 看不到新 hidden 修 -->
- <link rel="stylesheet" href="/static/style.css?v=4.0.0" />
+ <link rel="stylesheet" href="/static/style.css?v=4.0.5" />
  <!-- echarts 本地打包，不走 CDN（防离线/网慢时图表空白）。vis-network 已移除（死依赖，7 个可视化全用 echarts） -->
  <script src="/static/echarts.min.js"></script>
 </head>
@@ -36,62 +36,10 @@
  <span class="ai-pill-text">检测中</span>
  </span>
  <button class="btn-icon" id="btn-refresh" title="刷新数据 (R)">⟳</button>
- <!-- B-新157: 工具菜单收纳所有功能入口, 减少 sidebar 25 项负担 -->
+ <!-- 工具菜单：只收纳左侧工作流没有的项，两列分组展示 -->
  <div class="topbar-menu-wrap" id="tools-menu-wrap">
  <button class="btn-icon" id="btn-tools" title="工具 (T)">工具</button>
- <div class="topbar-menu" id="tools-menu" style="display:none">
- <!-- 抽屉式重组：5 个可折叠分组，写作优先视角归类 -->
- <div class="menu-drawer open">
- <div class="menu-drawer-head"> 写作</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="import">导入 MD 手稿</button>
- <button class="topbar-menu-item" data-action="goto" data-target="chapters">章节 / 卷管理</button>
- <button class="topbar-menu-item" data-action="goto" data-target="characters">人物档案</button>
- </div>
- </div>
- <div class="menu-drawer open">
- <div class="menu-drawer-head"> 一致性扫描</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="scan">扫描问题</button>
- <button class="topbar-menu-item" data-action="goto" data-target="threadscan">伏笔深度</button>
- <button class="topbar-menu-item" data-action="goto" data-target="logicscan">逻辑链深度</button>
- <button class="topbar-menu-item" data-action="goto" data-target="stylescan">文风漂移</button>
- <button class="topbar-menu-item" data-action="goto" data-target="driftscan">性格漂移</button>
- </div>
- </div>
- <div class="menu-drawer">
- <div class="menu-drawer-head"> 洞察可视化</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="knowledge_graph">知识图谱</button>
- <button class="topbar-menu-item" data-action="goto" data-target="timeline">时间线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="chain">事件因果链</button>
- <button class="topbar-menu-item" data-action="goto" data-target="rhythm">节奏曲线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="matrix">MBTI 矩阵</button>
- <button class="topbar-menu-item" data-action="goto" data-target="arcs">成长线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="relcurve">亲密度曲线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="network">关系网</button>
- </div>
- </div>
- <div class="menu-drawer">
- <div class="menu-drawer-head"> 标注 · 结构</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="mbti">MBTI 标注</button>
- <button class="topbar-menu-item" data-action="goto" data-target="events">事件 / 伏笔 / 事实</button>
- <button class="topbar-menu-item" data-action="goto" data-target="structure">叙事结构</button>
- <button class="topbar-menu-item" data-action="goto" data-target="vocab-show">用词一致性</button>
- <button class="topbar-menu-item" data-action="goto" data-target="review-show">审稿进度</button>
- </div>
- </div>
- <div class="menu-drawer">
- <div class="menu-drawer-head"> AI · 迁移</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="ai-extract">AI 自动抽取</button>
- <button class="topbar-menu-item" data-action="goto" data-target="opt-all">AI 修改建议</button>
- <button class="topbar-menu-item" data-action="goto" data-target="pipeline"> 修改流水线</button>
- <button class="topbar-menu-item" data-action="migrate-show"> 跨设备迁移</button>
- </div>
- </div>
- </div>
+ 
  </div>
  <button class="btn-icon" id="btn-theme" title="切换主题">主题</button>
  <button class="btn-icon" id="btn-focus" title="专注写作模式 (F)">专注</button>
@@ -839,6 +787,59 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  </div>
 
- <script src="/static/app.js?v=2.1.0"></script>
+ <script src="/static/app.js?v=2.1.2"></script>
+
+<div class="topbar-menu" id="tools-menu" style="display:none">
+ <div class="tm-col">
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"><span class="tm-group-ico">🔍</span>扫描</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="threadscan">伏笔深度</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="logicscan">逻辑链深度</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="stylescan">文风漂移</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="driftscan">性格漂移</button>
+ </div>
+ </div>
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"><span class="tm-group-ico">🗂️</span>管理</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="chapters">章节 / 卷管理</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="characters">人物档案</button>
+ </div>
+ </div>
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"><span class="tm-group-ico">✨</span>AI · 迁移</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="ai-extract">AI 自动抽取</button>
+ <button class="topbar-menu-item" data-action="migrate-show"> 跨设备迁移</button>
+ </div>
+ </div>
+ </div>
+ <div class="tm-col">
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"><span class="tm-group-ico">📊</span>洞察</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="knowledge_graph">知识图谱</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="timeline">时间线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="chain">事件因果链</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="rhythm">节奏曲线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="matrix">MBTI 矩阵</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="arcs">成长线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="relcurve">亲密度曲线</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="network">关系网</button>
+ </div>
+ </div>
+ <div class="menu-drawer open">
+ <div class="menu-drawer-head"><span class="tm-group-ico">🏷️</span>标注</div>
+ <div class="menu-drawer-body">
+ <button class="topbar-menu-item" data-action="goto" data-target="mbti">MBTI 标注</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="events">事件 / 伏笔 / 事实</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="structure">叙事结构</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="vocab-show">用词一致性</button>
+ <button class="topbar-menu-item" data-action="goto" data-target="review-show">审稿进度</button>
+ </div>
+ </div>
+ </div>
+ </div>
 </body>
 </html>

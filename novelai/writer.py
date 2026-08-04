@@ -54,6 +54,7 @@ def generate_outline(
             synopsis=project.get("synopsis") or "（未填写）",
             style=project.get("style") or "（未指定）",
             pov_mode=project.get("pov_mode") or "限知视角",
+            time_unit=project.get("story_time_unit") or "回",
             target_chapters=target_chapters,
             characters_brief=chars_brief,
             key_beats=beats,

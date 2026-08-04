@@ -854,82 +854,146 @@ function renderNewNovel() {
  const presetMatch = Object.entries(STYLE_PRESETS).find(([k,v]) => v && v === curStyle);
  const presetSel = presetMatch ? presetMatch[0] : "自定义";
  const presetOpts = Object.keys(STYLE_PRESETS).map(k => `<option value="${k}" ${k===presetSel?"selected":""}>${k}</option>`).join("");
+ const draft = _nnReadDraft(); // localStorage 草稿回填
+ const targetCh = draft.chapters || "20";
+ const wordsSel = _nnWordsSel(); // 当前每章目标字数档位(用于高亮)
+ _nnStep = 1;
+ _nnOutlineData = null; // 清上次残留，避免第 2 步面板空转
  setToolBody(`
  <div style="max-width:720px;margin:0 auto">
- <div class="detail-section">
- <h4>第 1 步：项目设定</h4>
- <div style="display:flex;flex-direction:column;gap:12px">
- <div>
- <label style="font-size:12px;color:var(--fg-muted)">书名</label>
- <input type="text" id="nn-title" value="${ESC(p.title||"")}" placeholder="给你的小说起个名字" style="width:100%;padding:8px 11px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px;margin-top:4px">
+ <div class="nn-stepper" id="nn-stepper">
+ <div class="nn-step" data-step="1"><span class="nn-step-num">1</span><span class="nn-step-label">项目设定</span></div>
+ <div class="nn-step-sep"></div>
+ <div class="nn-step" data-step="2"><span class="nn-step-num">2</span><span class="nn-step-label">生成大纲</span></div>
+ <div class="nn-step-sep"></div>
+ <div class="nn-step" data-step="3"><span class="nn-step-num">3</span><span class="nn-step-label">写正文</span></div>
  </div>
- <div>
- <label style="font-size:12px;color:var(--fg-muted)">梗概（越详细 AI 生成越精准）</label>
- <textarea id="nn-synopsis" rows="4" placeholder="一句话或几句话描述你的故事核心：主角是谁、想要什么、障碍是什么、世界观背景…" style="width:100%;padding:8px 11px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px;margin-top:4px;resize:vertical">${ESC(p.synopsis||"")}</textarea>
+
+ <div class="nn-panel" id="nn-step-1">
+ <div class="detail-section">
+ <h4>项目设定</h4>
+ <div class="nn-field">
+ <label class="nn-label">书名</label>
+ <input type="text" id="nn-title" class="nn-input" value="${ESC(draft.title ?? p.title ?? "")}" placeholder="给你的小说起个名字">
+ </div>
+ <div class="nn-field">
+ <label class="nn-label">梗概（越详细 AI 生成越精准）</label>
+ <textarea id="nn-synopsis" class="nn-input" rows="4" placeholder="一句话或几句话描述你的故事核心：主角是谁、想要什么、障碍是什么、世界观背景…">${ESC(draft.synopsis ?? p.synopsis ?? "")}</textarea>
  </div>
  <div style="display:flex;gap:12px;flex-wrap:wrap">
- <div style="flex:1;min-width:160px">
- <label style="font-size:12px;color:var(--fg-muted)">文风预设</label>
- <select id="nn-preset" style="width:100%;padding:8px 11px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px;margin-top:4px">${presetOpts}</select>
+ <div class="nn-field" style="flex:1;min-width:160px">
+ <label class="nn-label">文风预设</label>
+ <select id="nn-preset" class="nn-input">${presetOpts}</select>
  </div>
- <div style="flex:1;min-width:160px">
- <label style="font-size:12px;color:var(--fg-muted)">视角</label>
- <select id="nn-pov" style="width:100%;padding:8px 11px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px;margin-top:4px">
- <option value="限知视角" ${p.pov_mode==="限知视角"?"selected":""}>限知视角</option>
- <option value="全知视角" ${p.pov_mode==="全知视角"?"selected":""}>全知视角</option>
+ <div class="nn-field" style="flex:1;min-width:160px">
+ <label class="nn-label">视角</label>
+ <select id="nn-pov" class="nn-input">
+ <option value="限知视角" ${(draft.pov ?? p.pov_mode) === "限知视角" ? "selected" : ""}>限知视角</option>
+ <option value="全知视角" ${(draft.pov ?? p.pov_mode) === "全知视角" ? "selected" : ""}>全知视角</option>
  </select>
  </div>
- <div style="flex:1;min-width:120px">
- <label style="font-size:12px;color:var(--fg-muted)">时间单位</label>
- <select id="nn-unit" style="width:100%;padding:8px 11px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px;margin-top:4px">
- ${["回","章","日","月","年","节"].map(u => `<option value="${u}" ${p.story_time_unit===u?"selected":""}>${u}</option>`).join("")}
+ <div class="nn-field" style="flex:1;min-width:120px">
+ <label class="nn-label">时间单位</label>
+ <select id="nn-unit" class="nn-input">
+ ${["回","章","日","月","年","节"].map(u => `<option value="${u}" ${(draft.unit ?? p.story_time_unit) === u ? "selected" : ""}>${u}</option>`).join("")}
  </select>
  </div>
  </div>
- <div id="nn-style-wrap" ${presetSel==="自定义"?"":"style='display:none'"}>
- <label style="font-size:12px;color:var(--fg-muted)">自定义文风描述</label>
- <textarea id="nn-style" rows="2" placeholder="描述你想要的文风…" style="width:100%;padding:8px 11px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px;margin-top:4px;resize:vertical">${ESC(curStyle)}</textarea>
+ <div id="nn-style-wrap" class="nn-field" ${(draft.preset ?? presetSel) === "自定义" ? "" : "style='display:none'"}>
+ <label class="nn-label">自定义文风描述</label>
+ <textarea id="nn-style" class="nn-input" rows="2" placeholder="描述你想要的文风…">${ESC(draft.style ?? curStyle)}</textarea>
  </div>
- </div>
- <div style="margin-top:8px">
+ <div class="nn-field">
  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--fg-muted)">
  <input type="checkbox" id="nn-reset" style="accent-color:var(--accent)"> 清除当前所有数据，从零开始写新书（保留人物设定）
  </label>
  </div>
- <div style="margin-top:12px;display:flex;gap:8px">
- <button class="btn primary" id="nn-save-project">保存项目设定</button>
- <span id="nn-save-status" style="color:var(--fg-dim);font-size:11px;align-self:center"></span>
+ <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+ <button class="btn primary" id="nn-save-project">保存并下一步 →</button>
+ <span id="nn-save-status" style="color:var(--fg-dim);font-size:11px"></span>
+ </div>
  </div>
  </div>
 
- <div class="detail-section" style="margin-top:16px">
- <h4>第 2 步：生成大纲</h4>
+ <div class="nn-panel" id="nn-step-2">
+ <div class="detail-section">
+ <h4>生成大纲</h4>
+ <div class="nn-field">
+ <label class="nn-label">预计规模</label>
+ <div class="nn-seg-group" id="nn-scale-group">
+ ${[[10,"短篇"],[50,"中篇"],[100,"长篇"],[200,"超长篇"]].map(([n,label]) => `<button type="button" class="nn-seg${parseInt(targetCh)===n?" nn-on":""}" data-chapters="${n}">${label} ${n}章</button>`).join("")}
+ </div>
+ </div>
  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
- <label style="font-size:12px;color:var(--fg-muted)">目标章节数</label>
- <input type="number" id="nn-target-chapters" value="20" min="3" max="200" style="width:80px;padding:6px 10px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:13px">
+ <label class="nn-label" style="margin-bottom:0">目标章节数</label>
+ <input type="number" id="nn-target-chapters" class="nn-input" value="${ESC(targetCh)}" min="3" max="500" style="width:90px;margin-bottom:0">
  <button class="btn primary" id="nn-gen-outline">生成大纲</button>
  <span id="nn-outline-status" style="color:var(--fg-dim);font-size:11px"></span>
  </div>
  <div id="nn-outline-result" style="margin-top:12px"></div>
  </div>
+ </div>
 
- <div class="detail-section" style="margin-top:16px">
- <h4>第 3 步：写正文</h4>
+ <div class="nn-panel" id="nn-step-3">
+ <div class="detail-section">
+ <h4>写正文</h4>
+ <div class="nn-field">
+ <label class="nn-label">每章目标字数</label>
+ <div class="nn-seg-group" id="nn-words-group">
+ ${[[2000,"2千"],[5000,"5千"],[10000,"1万"],[20000,"2万"]].map(([n,label]) => `<button type="button" class="nn-seg${wordsSel===n?" nn-on":""}" data-words="${n}">${label}字</button>`).join("")}
+ <span style="font-size:11px;color:var(--fg-dim);align-self:center">写章时自动生效，也可在编辑器里单独改</span>
+ </div>
+ </div>
  <div id="nn-write-section" style="color:var(--fg-dim);font-size:12px">先完成第 1、2 步（保存项目 + 生成大纲）。</div>
+ </div>
  </div>
  </div>
  `);
 
+ _nnRenderStep();
+ // 步骤条：点击已完成步骤回看
+ document.querySelectorAll("#nn-stepper .nn-step").forEach(step => {
+ step.onclick = () => {
+ const s = parseInt(step.dataset.step);
+ if (s < _nnStep) { _nnStep = s; _nnRenderStep(); }
+ };
+ });
  // 文风预设切换
  $("#nn-preset").onchange = (e) => {
  $("#nn-style-wrap").style.display = e.target.value === "自定义" ? "" : "none";
+ _nnScheduleDraft();
  };
+ // 草稿：所有 nn-* 输入变更即存
+ ["nn-title","nn-synopsis","nn-pov","nn-unit","nn-style","nn-target-chapters"].forEach(id => {
+ const el = document.getElementById(id);
+ if (el) el.addEventListener("input", _nnScheduleDraft);
+ });
+ $("#nn-reset").onchange = _nnScheduleDraft;
+ // 规模分段：点击填章节数
+ document.querySelectorAll("#nn-scale-group .nn-seg").forEach(seg => {
+ seg.onclick = () => {
+ document.querySelectorAll("#nn-scale-group .nn-seg").forEach(s => s.classList.remove("nn-on"));
+ seg.classList.add("nn-on");
+ $("#nn-target-chapters").value = seg.dataset.chapters;
+ _nnScheduleDraft();
+ };
+ });
+ // 字数分段：点击写全局默认目标字数
+ document.querySelectorAll("#nn-words-group .nn-seg").forEach(seg => {
+ seg.onclick = () => {
+ document.querySelectorAll("#nn-words-group .nn-seg").forEach(s => s.classList.remove("nn-on"));
+ seg.classList.add("nn-on");
+ const w = parseInt(seg.dataset.words);
+ localStorage.setItem("novelai:default-target-words", String(w));
+ showToast(`每章目标字数设为 ${(w/1000).toFixed(w%1000?1:0)} 千字`, "info");
+ };
+ });
  // 保存项目
  $("#nn-save-project").onclick = async () => {
  const preset = $("#nn-preset").value;
  const style = preset === "自定义" ? ($("#nn-style").value || "") : preset;
  const doReset = $("#nn-reset").checked;
- if (doReset && !confirm("确定清除当前所有章节/事件/伏笔数据，重新开始？\n（人物设定会保留）")) {
+ if (doReset && !(await showConfirm("确定清除当前所有章节/事件/伏笔数据，重新开始？\n（人物设定会保留）", "! 重置项目"))) {
  $("#nn-reset").checked = false;
  return;
  }
@@ -944,19 +1008,26 @@ function renderNewNovel() {
  showToast(doReset ? "已清除旧数据，项目已重置" : "项目设定已保存");
  STATE.project = {...(STATE.project||{}), title: $("#nn-title").value, synopsis: $("#nn-synopsis").value, style, pov_mode: $("#nn-pov").value, story_time_unit: $("#nn-unit").value};
  STATE.chapters = []; // 清空前端缓存
- updateWriteSection();
+ localStorage.removeItem(NN_DRAFT_LS); // 已落库，清草稿
+ _nnStep = 2;
+ _nnRenderStep();
+ _nnRefreshExistingOutline();
  } catch (e) { toastError("保存失败", e); $("#nn-save-status").textContent = ""; }
  };
  // 生成大纲
  $("#nn-gen-outline").onclick = async () => {
  const target = parseInt($("#nn-target-chapters").value) || 20;
+ const hasExisting = !!_nnOutlineData || document.querySelector("#nn-outline-result .nn-card") || document.querySelector("#nn-has-outline");
+ if (hasExisting && !(await showConfirm(`将重新生成整本大纲（${target} 章），覆盖当前大纲。确定继续？`, "! 重新生成"))) return;
  try {
  $("#nn-outline-status").textContent = "AI 生成中（可能需 30-60 秒）…";
  $("#nn-gen-outline").disabled = true;
  const result = await API.post("/outline/generate", {target_chapters: target}, LLM_TIMEOUT_MS);
+ _nnOutlineData = result;
  renderOutlineResult(result);
  $("#nn-outline-status").textContent = `生成 ${result.count} 章`;
- updateWriteSection();
+ _nnStep = 3;
+ _nnRenderStep();
  } catch (e) {
  toastError("大纲生成失败", e);
  $("#nn-outline-status").textContent = "失败";
@@ -964,56 +1035,151 @@ function renderNewNovel() {
  $("#nn-gen-outline").disabled = false;
  }
  };
- // 检查是否已有大纲（用户可能之前生成过，离开了又回来）
+ _nnRefreshExistingOutline();
+ _nnLoadProjectIntoForm(); // 刷新后从后端回填已保存的项目设定
+}
+
+// 刷新后 STATE.project 丢失，从 /dashboard 拉回已保存的项目设定回填表单
+function _nnLoadProjectIntoForm() {
+ if (STATE.project && Object.keys(STATE.project).length > 0) return; // 已有数据不覆盖
+ API.get("/dashboard").then(d => {
+ const proj = d && d.project;
+ if (!proj) return;
+ const draft = _nnReadDraft(); // 草稿优先：用户在填的新书
+ const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+ if (!(draft.title ?? "")) setVal("nn-title", proj.title || "");
+ if (!(draft.synopsis ?? "")) setVal("nn-synopsis", proj.synopsis || "");
+ if (!(draft.pov ?? "")) setVal("nn-pov", proj.pov_mode || "限知视角");
+ if (!(draft.unit ?? "")) setVal("nn-unit", proj.story_time_unit || "日");
+ if (!(draft.style ?? "")) {
+ const sel = Object.entries(STYLE_PRESETS).find(([k,v]) => v && v === proj.style);
+ if (sel) { setVal("nn-preset", sel[0]); $("#nn-style-wrap").style.display = "none"; }
+ else if (proj.style) { setVal("nn-preset", "自定义"); $("#nn-style-wrap").style.display = ""; setVal("nn-style", proj.style); }
+ }
+ STATE.project = proj; // 缓存，避免重复拉取
+ }).catch(() => {});
+}
+
+// ---- 新建小说：步骤与草稿 ----
+const NN_DRAFT_LS = "novelai:nn-draft";
+let _nnStep = 1;
+let _nnOutlineData = null;
+let _nnDraftTimer = null;
+
+function _nnReadDraft() {
+ try { return JSON.parse(localStorage.getItem(NN_DRAFT_LS) || "{}"); } catch (_) { return {}; }
+}
+function _nnScheduleDraft() {
+ clearTimeout(_nnDraftTimer);
+ _nnDraftTimer = setTimeout(() => {
+ const pick = id => { const el = document.getElementById(id); return el ? el.value : ""; };
+ localStorage.setItem(NN_DRAFT_LS, JSON.stringify({
+ title: pick("nn-title"), synopsis: pick("nn-synopsis"),
+ preset: pick("nn-preset"), pov: pick("nn-pov"), unit: pick("nn-unit"),
+ style: pick("nn-style"), chapters: pick("nn-target-chapters"),
+ }));
+ }, 300);
+}
+function _nnWordsSel() {
+ const v = parseInt(localStorage.getItem("novelai:default-target-words") || "0");
+ return [2000, 5000, 10000, 20000].includes(v) ? v : 0;
+}
+function _nnRenderStep() {
+ document.querySelectorAll("#nn-stepper .nn-step").forEach(step => {
+ const s = parseInt(step.dataset.step);
+ step.classList.toggle("nn-active", s === _nnStep);
+ step.classList.toggle("nn-done", s < _nnStep);
+ });
+ document.querySelectorAll(".nn-panel").forEach(panel => {
+ panel.classList.remove("nn-active");
+ });
+ const cur = document.getElementById("nn-step-" + _nnStep);
+ if (cur) cur.classList.add("nn-active");
+}
+function _nnRefreshExistingOutline() {
+ // 已存在大纲：展示摘要，生成按钮变"重新生成"
  API.get("/chapters").then(chapters => {
- if (chapters.length > 0) {
- // 已有大纲：自动展示大纲摘要 + 写正文入口
- $("#nn-outline-result").innerHTML = `<div style="padding:8px;color:var(--fg-muted);font-size:12px">已有 ${chapters.length} 章大纲。${chapters.filter(c => c.word_count > 0).length} 章已写正文。</div>`;
+ if (chapters && chapters.length > 0) {
+ const written = chapters.filter(c => c.word_count > 0).length;
+ if (!_nnOutlineData) {
+ $("#nn-outline-result").innerHTML = `<div id="nn-has-outline" style="padding:10px;color:var(--fg-muted);font-size:12px">已有 ${chapters.length} 章大纲 · ${written} 章已写正文。可点击"重新生成"覆盖，或直接进入下一步。</div>`;
+ }
  $("#nn-outline-status").textContent = `已有 ${chapters.length} 章`;
- updateWriteSection();
+ const btn = document.getElementById("nn-gen-outline");
+ if (btn) btn.textContent = "重新生成";
+ if (_nnStep < 2) { _nnStep = 2; _nnRenderStep(); }
+ updateWriteSection(); // 已有大纲 → 第 3 步写正文入口可用
  }
  }).catch(() => {});
- updateWriteSection();
 }
 
 function renderOutlineResult(result) {
  const chapters = result.chapters || [];
  if (!chapters.length) { $("#nn-outline-result").innerHTML = '<p class="placeholder">大纲为空</p>'; return; }
- let html = `<div style="max-height:400px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px">`;
+ _nnOutlineData = result;
+ let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+ <button class="btn small" id="nn-toggle-expand"> 全部展开</button>
+ </div>
+ <div style="max-height:420px;overflow:auto">`;
  for (const ch of chapters) {
- const hook = ch.hook ? `<span class="badge" style="background:color-mix(in srgb, var(--warning) 15%, transparent);color:var(--warning);font-size:11px;margin-left:6px">钩子: ${ESC(ch.hook.slice(0,30))}</span>` : "";
- html += `<div class="list-row" style="padding:6px 10px">
- <div class="lr-title" style="font-size:12px">第${ch.idx}章 ${ESC(ch.title||"")}${hook}</div>
- <div class="lr-meta" style="font-size:11px">${ESC((ch.summary||"").slice(0,100))}</div>
+ const hook = ch.hook ? `<span class="badge" style="background:color-mix(in srgb, var(--warning) 15%, transparent);color:var(--warning);font-size:11px;margin-left:6px">钩子</span>` : "";
+ html += `<div class="nn-card" data-idx="${ch.idx}">
+ <div class="nn-card-head">
+ <span class="nn-caret">▸</span>
+ <span class="nn-card-title">第${ch.idx}章 · ${ESC(ch.title || "")}</span>
+ ${hook}
+ </div>
+ <div class="nn-card-body">
+ <div class="nn-card-sec"><div class="nn-card-sec-label">摘要</div>${ESC(ch.summary || "")}</div>
+ ${ch.hook ? `<div class="nn-card-sec"><div class="nn-card-sec-label">钩子</div>${ESC(ch.hook)}</div>` : ""}
+ ${ch.causal_link ? `<div class="nn-card-sec"><div class="nn-card-sec-label">承接</div>${ESC(ch.causal_link)}</div>` : ""}
+ <div class="nn-card-sec"><div class="nn-card-sec-label">元信息</div>POV：${ESC(ch.pov_character || "-")} · 时间：${ESC(ch.story_time ?? "-")} · 地点：${ESC(ch.location || "-")}</div>
+ </div>
  </div>`;
  }
  html += `</div>`;
  if (result.structural_notes) {
- html += `<div style="margin-top:8px;font-size:11px;color:var(--fg-muted)">结构备注：${ESC(result.structural_notes)}</div>`;
+ html += `<div class="nn-notes"><div class="nn-notes-label">结构备注</div>${ESC(result.structural_notes)}</div>`;
  }
  $("#nn-outline-result").innerHTML = html;
+ document.querySelectorAll("#nn-outline-result .nn-card").forEach(card => {
+ card.querySelector(".nn-card-head").onclick = () => card.classList.toggle("nn-open");
+ });
+ const expandBtn = document.getElementById("nn-toggle-expand");
+ let allOpen = false;
+ expandBtn.onclick = () => {
+ allOpen = !allOpen;
+ document.querySelectorAll("#nn-outline-result .nn-card").forEach(c => c.classList.toggle("nn-open", allOpen));
+ expandBtn.textContent = allOpen ? " 全部收起" : " 全部展开";
+ };
+ const btn = document.getElementById("nn-gen-outline");
+ if (btn) btn.textContent = "重新生成";
+ updateWriteSection();
 }
 
 function updateWriteSection() {
- const hasOutline = document.querySelector("#nn-outline-result .list-row") || document.querySelector("#nn-outline-result div");
+ const hasOutline = _nnOutlineData || document.querySelector("#nn-outline-result .nn-card") || document.querySelector("#nn-has-outline");
  if (!hasOutline) {
- $("#nn-write-section").innerHTML = '先完成<a href="#" onclick="goto(\'new-novel\');return false" style="color:var(--accent)">第 2 步</a>生成大纲。';
+ $("#nn-write-section").innerHTML = '先完成第 1、2 步（保存项目 + 生成大纲）。';
  return;
  }
+ const target = parseInt(localStorage.getItem("novelai:default-target-words") || "0") || 0;
+ const wordsTip = target ? `（每章目标 ${(target/1000).toFixed(target%1000?1:0)} 千字）` : "";
  $("#nn-write-section").innerHTML = `
  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
- <button class="btn primary" onclick="writeFirstChapter()">AI 写第 1 章</button>
+ <button class="btn primary" onclick="writeFirstChapter()">AI 写第 1 章 ${wordsTip}</button>
  <span style="color:var(--fg-muted);font-size:11px">单章约 30-90 秒，完成后自动跳转编辑器</span>
  </div>
  <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
  <span style="font-size:12px;color:var(--fg-muted)">或批量生成：</span>
- <input type="number" id="nn-batch-from" value="1" min="1" style="width:60px;padding:4px 8px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:12px">
+ <input type="number" id="nn-batch-from" value="1" min="1" class="nn-input" style="width:60px">
  <span style="font-size:12px">到</span>
- <input type="number" id="nn-batch-to" value="5" min="1" style="width:60px;padding:4px 8px;background:var(--bg-card);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur-webkit);border:1px solid var(--border-glass);border-radius:var(--radius);box-shadow:var(--shadow-inner);color:var(--fg);font-size:12px">
+ <input type="number" id="nn-batch-to" value="5" min="1" class="nn-input" style="width:60px">
  <button class="btn" onclick="batchGenerate()">批量生成</button>
  </div>
  `;
 }
+
 
 async function writeFirstChapter() {
  try {
@@ -7248,18 +7414,22 @@ window.addEventListener("DOMContentLoaded", () => {
  toolsBtn.onclick = (e) => {
  e.stopPropagation();
  const willShow = toolsMenu.style.display === "none";
- toolsMenu.style.display = willShow ? "block" : "none";
- // 打开时高亮激活
- if (willShow) highlightActiveMenuItem();
+ if (willShow) {
+ // body 级浮层：按按钮位置弹出，右缘对齐按钮，顶部对齐按钮下方
+ const r = toolsBtn.getBoundingClientRect();
+ const viewW = window.innerWidth;
+ const right = Math.max(12, Math.round(viewW - r.right)); // 视口内右缘，至少留 12px
+ const top = Math.round(r.bottom + 6);
+ toolsMenu.style.top = top + "px";
+ toolsMenu.style.right = right + "px";
+ toolsMenu.style.display = "grid";
+ highlightActiveMenuItem();
+ } else {
+ toolsMenu.style.display = "none";
+ }
  };
  // 点击 menu item
  toolsMenu.addEventListener("click", (e) => {
- // 抽屉头：展开/折叠，不进入 item 分发
- const head = e.target.closest(".menu-drawer-head");
- if (head) {
- head.closest(".menu-drawer").classList.toggle("open");
- return;
- }
  const item = e.target.closest(".topbar-menu-item");
  if (!item) return;
  const action = item.dataset.action;

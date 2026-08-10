@@ -45,6 +45,11 @@ DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_DB_PATH = DATA_DIR / "novel.db"
+WORKSPACES_DIR = DATA_DIR / "workspaces"
+_CURRENT_WS_FILE = DATA_DIR / "current_workspace.txt"
+import re as _re
+import sqlite3 as _sqlite3
+import shutil as _shutil
 
 
 def _load_env_file() -> None:
@@ -137,6 +142,8 @@ class AppConfig:
         mini_model = os.environ.get("NOVELAI_MINI_MODEL", model)
         embedding_model = os.environ.get("NOVELAI_EMBEDDING_MODEL", "")
         enable_embedding = os.environ.get("NOVELAI_ENABLE_EMBEDDING", "true").lower() in ("true", "1", "yes")
+        # db_path 用占位符，模块加载完后由 _init_workspaces() 修正为当前工作区路径
+        db_str = os.environ.get("NOVELAI_DB", "__WORKSPACE__")
         return cls(
             ai=AIConfig(
                 provider=provider,
@@ -147,11 +154,145 @@ class AppConfig:
                 embedding_model=embedding_model,
                 enable_embedding=enable_embedding,
             ),
-            db_path=Path(os.environ.get("NOVELAI_DB", str(DEFAULT_DB_PATH))),
+            db_path=Path(db_str) if db_str != "__WORKSPACE__" else DEFAULT_DB_PATH,
         )
 
 
 CONFIG = AppConfig.from_env()
+
+
+# ============================================================
+# 工作区管理（每本小说一个独立数据库）
+# ============================================================
+
+def _slugify(title: str) -> str:
+    """书名 → 文件系统安全的目录名（保留中文，去特殊符号）"""
+    s = _re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", title or "未命名").strip()
+    s = _re.sub(r"\s+", "_", s)
+    return s[:40] or "未命名"
+
+
+def _read_project_title(db_path: Path) -> str:
+    """从 db 读 project.title（用于列表展示），失败返回文件名"""
+    try:
+        conn = _sqlite3.connect(str(db_path))
+        row = conn.execute("SELECT title FROM project ORDER BY id LIMIT 1").fetchone()
+        conn.close()
+        return row[0] if row else "未命名小说"
+    except Exception:
+        return db_path.parent.name
+
+
+def _migrate_legacy_db() -> None:
+    """一次性迁移：把旧的 data/novel.db 移入工作区目录"""
+    if not DEFAULT_DB_PATH.exists():
+        return  # 没有旧库，无需迁移
+    if WORKSPACES_DIR.exists() and any(WORKSPACES_DIR.iterdir()):
+        return  # 工作区目录已有内容，说明已迁移过
+    WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
+    title = _read_project_title(DEFAULT_DB_PATH)
+    slug = _slugify(title)
+    ws_dir = WORKSPACES_DIR / slug
+    if ws_dir.exists():
+        ws_dir = WORKSPACES_DIR / f"{slug}_{int(__import__('time').time())}"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    # 移动 db + WAL/SHM sidecar
+    for suffix in ["", "-wal", "-shm"]:
+        src = Path(str(DEFAULT_DB_PATH) + suffix)
+        if src.exists():
+            _shutil.move(str(src), str(ws_dir / src.name))
+    _CURRENT_WS_FILE.write_text(slug, encoding="utf-8")
+    print(f"[novelai] 已迁移旧数据库到工作区: {slug}")
+
+
+def list_workspaces() -> list[dict]:
+    """列出所有工作区，每项 {id, title, db_path, created_at}"""
+    _migrate_legacy_db()
+    if not WORKSPACES_DIR.exists():
+        return []
+    out = []
+    for ws_dir in sorted(WORKSPACES_DIR.iterdir()):
+        if not ws_dir.is_dir():
+            continue
+        db_path = ws_dir / "novel.db"
+        if not db_path.exists():
+            continue
+        out.append({
+            "id": ws_dir.name,
+            "title": _read_project_title(db_path),
+            "db_path": str(db_path),
+            "created_at": db_path.stat().st_mtime,
+        })
+    return out
+
+
+def get_current_workspace_id() -> str | None:
+    """读当前工作区 id；不存在时自动选第一个"""
+    _migrate_legacy_db()
+    if _CURRENT_WS_FILE.exists():
+        ws_id = _CURRENT_WS_FILE.read_text(encoding="utf-8").strip()
+        if (WORKSPACES_DIR / ws_dir.name).exists() if False else (WORKSPACES_DIR / ws_id).exists():
+            return ws_id
+    # 回退：选第一个工作区
+    wss = list_workspaces()
+    if wss:
+        _CURRENT_WS_FILE.write_text(wss[0]["id"], encoding="utf-8")
+        return wss[0]["id"]
+    return None
+
+
+def get_current_db_path() -> Path:
+    """返回当前工作区的 db 路径；无工作区时回退默认"""
+    ws_id = get_current_workspace_id()
+    if ws_id:
+        return WORKSPACES_DIR / ws_id / "novel.db"
+    return DEFAULT_DB_PATH
+
+
+def create_workspace(title: str) -> dict:
+    """建新工作区（生成 slug、建目录、空 db、切换为当前）。返回 {id, db_path}"""
+    WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
+    slug = _slugify(title)
+    ws_dir = WORKSPACES_DIR / slug
+    # slug 冲突加序号
+    n = 2
+    while ws_dir.exists():
+        ws_dir = WORKSPACES_DIR / f"{slug}_{n}"
+        n += 1
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    db_path = ws_dir / "novel.db"
+    # 切换为当前（db 文件由 Database 初始化时创建）
+    _CURRENT_WS_FILE.write_text(ws_dir.name, encoding="utf-8")
+    return {"id": ws_dir.name, "db_path": str(db_path)}
+
+
+def switch_workspace(ws_id: str) -> str:
+    """切换当前工作区，返回 db_path。工作区不存在则抛错"""
+    ws_dir = WORKSPACES_DIR / ws_id
+    if not ws_dir.exists() or not (ws_dir / "novel.db").exists():
+        raise FileNotFoundError(f"工作区不存在: {ws_id}")
+    _CURRENT_WS_FILE.write_text(ws_id, encoding="utf-8")
+    return str(ws_dir / "novel.db")
+
+
+def delete_workspace(ws_id: str) -> None:
+    """删除工作区（不能删当前）"""
+    current = get_current_workspace_id()
+    if ws_id == current:
+        raise ValueError("不能删除当前工作区")
+    ws_dir = WORKSPACES_DIR / ws_id
+    if ws_dir.exists():
+        _shutil.rmtree(str(ws_dir))
+
+
+# 模块加载完成：若无 NOVELAI_DB 环境变量，用当前工作区路径修正 CONFIG.db_path
+if not os.environ.get("NOVELAI_DB"):
+    try:
+        _ws_path = get_current_db_path()
+        if _ws_path != DEFAULT_DB_PATH or not DEFAULT_DB_PATH.exists():
+            CONFIG.db_path = _ws_path
+    except Exception:
+        pass
 
 
 def reload_config() -> None:

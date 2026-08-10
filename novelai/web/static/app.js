@@ -903,11 +903,6 @@ function renderNewNovel() {
  <label class="nn-label">自定义文风描述</label>
  <textarea id="nn-style" class="nn-input" rows="2" placeholder="描述你想要的文风…">${ESC(draft.style ?? curStyle)}</textarea>
  </div>
- <div class="nn-field">
- <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--fg-muted)">
- <input type="checkbox" id="nn-reset" style="accent-color:var(--accent)"> 清除当前所有数据，从零开始写新书（保留人物设定）
- </label>
- </div>
  <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
  <button class="btn primary" id="nn-save-project">保存并下一步 →</button>
  <span id="nn-save-status" style="color:var(--fg-dim);font-size:11px"></span>
@@ -968,7 +963,7 @@ function renderNewNovel() {
  const el = document.getElementById(id);
  if (el) el.addEventListener("input", _nnScheduleDraft);
  });
- $("#nn-reset").onchange = _nnScheduleDraft;
+ $("#nn-reset").onchange = _nnScheduleDraft; // 兼容残留（若存在）
  // 规模分段：点击填章节数
  document.querySelectorAll("#nn-scale-group .nn-seg").forEach(seg => {
  seg.onclick = () => {
@@ -988,27 +983,25 @@ function renderNewNovel() {
  showToast(`每章目标字数设为 ${(w/1000).toFixed(w%1000?1:0)} 千字`, "info");
  };
  });
- // 保存项目
+ // 保存项目（新建小说 = 建新工作区，天然隔离无需清表）
  $("#nn-save-project").onclick = async () => {
  const preset = $("#nn-preset").value;
  const style = preset === "自定义" ? ($("#nn-style").value || "") : preset;
- const doReset = $("#nn-reset").checked;
- if (doReset && !(await showConfirm("确定清除当前所有章节/事件/伏笔数据，重新开始？\n（人物设定会保留）", "! 重置项目"))) {
- $("#nn-reset").checked = false;
- return;
- }
+ const title = $("#nn-title").value.trim() || "未命名小说";
  try {
- $("#nn-save-status").textContent = "保存中…";
+ $("#nn-save-status").textContent = "创建新工作区…";
+ // 1. 建新工作区（独立数据库，自动切换）
+ await API.post("/workspaces/create", {title}, LLM_TIMEOUT_MS);
+ // 2. 在新工作区里设项目详情（无需 reset，库是全新的）
  await API.post("/project/setup", {
- title: $("#nn-title").value, synopsis: $("#nn-synopsis").value,
+ title, synopsis: $("#nn-synopsis").value,
  style: style, pov_mode: $("#nn-pov").value, story_time_unit: $("#nn-unit").value,
- reset: doReset,
  });
  $("#nn-save-status").textContent = "已保存";
- showToast(doReset ? "已清除旧数据，项目已重置" : "项目设定已保存");
- STATE.project = {...(STATE.project||{}), title: $("#nn-title").value, synopsis: $("#nn-synopsis").value, style, pov_mode: $("#nn-pov").value, story_time_unit: $("#nn-unit").value};
- STATE.chapters = []; // 清空前端缓存
- localStorage.removeItem(NN_DRAFT_LS); // 已落库，清草稿
+ showToast(`已创建新工作区《${title}》`);
+ STATE.project = {title, synopsis: $("#nn-synopsis").value, style, pov_mode: $("#nn-pov").value, story_time_unit: $("#nn-unit").value};
+ STATE.chapters = [];
+ localStorage.removeItem(NN_DRAFT_LS);
  _nnStep = 2;
  _nnRenderStep();
  _nnRefreshExistingOutline();
@@ -6864,6 +6857,71 @@ async function renderChapterComments(chapterIdx) {
 }
 
 
+// =================== 工作区切换器 ===================
+function _initWorkspaceSwitcher() {
+ const btn = $("#btn-workspace");
+ const menu = $("#ws-menu");
+ if (!btn || !menu) return;
+ btn.onclick = (e) => {
+ e.stopPropagation();
+ const willShow = menu.style.display === "none";
+ if (willShow) {
+ const r = btn.getBoundingClientRect();
+ menu.style.top = Math.round(r.bottom + 6) + "px";
+ menu.style.left = Math.round(r.left) + "px";
+ menu.style.display = "block";
+ _loadWorkspaceList();
+ } else {
+ menu.style.display = "none";
+ }
+ };
+ menu.addEventListener("click", (e) => {
+ const item = e.target.closest(".ws-item");
+ if (!item) return;
+ const id = item.dataset.id;
+ if (!id || item.classList.contains("ws-current")) return;
+ menu.style.display = "none";
+ _switchWorkspace(id);
+ });
+ $("#ws-menu-new").onclick = () => {
+ menu.style.display = "none";
+ goto("new-novel");
+ };
+ // 外部点击关闭
+ document.addEventListener("click", (e) => {
+ if (!menu.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+ menu.style.display = "none";
+ }
+ });
+}
+
+async function _loadWorkspaceList() {
+ const list = $("#ws-menu-list");
+ if (!list) return;
+ list.innerHTML = '<p style="padding:14px;color:var(--fg-muted);font-size:12px">加载中…</p>';
+ try {
+ const r = await API.get("/workspaces");
+ list.innerHTML = r.workspaces.map(ws => `
+ <div class="ws-item ${ws.is_current ? "ws-current" : ""}" data-id="${ESC(ws.id)}">
+ <div class="ws-item-title">${ESC(ws.title || "未命名")}</div>
+ <div class="ws-item-meta">${ws.chapter_count} 章 · ${(ws.word_count||0).toLocaleString()} 字${ws.is_current ? " · 当前" : ""}</div>
+ </div>
+ `).join("");
+ } catch (e) {
+ list.innerHTML = `<p style="color:var(--danger);font-size:12px;padding:14px">加载失败</p>`;
+ }
+}
+
+async function _switchWorkspace(id) {
+ try {
+ await API.post("/workspaces/switch", {id});
+ showToast("正在切换工作区…", "info");
+ setTimeout(() => location.reload(), 600);
+ } catch (e) {
+ toastError("切换失败", e);
+ }
+}
+
 // =================== 角色声音分析 ===================
 // =================== 审稿进度看板 ===================
 async function showReviewModal() {
@@ -7406,6 +7464,9 @@ window.addEventListener("DOMContentLoaded", () => {
  $("#btn-help").onclick = showOnboarding;
  $("#btn-theme").onclick = toggleTheme;
  $("#btn-focus").onclick = toggleFocusMode;
+
+ // 工作区切换器（顶栏左侧）
+ _initWorkspaceSwitcher();
 
  // B-新158: 顶栏工具菜单 toggle
  const toolsBtn = $("#btn-tools");

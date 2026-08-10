@@ -52,6 +52,27 @@ def get_db() -> Database:
         _DB = Database(CONFIG.db_path)
     return _DB
 
+
+# 需要同时重置的结构分析单例
+_STRUCT_ANA = None
+
+
+def reset_db() -> None:
+    """切换工作区后调用：重建 _DB + 清所有缓存单例，无需重启进程"""
+    global _DB, _STRUCT_ANA
+    _DB = None
+    _STRUCT_ANA = None
+    _LAST_PIPELINE.clear()
+    with _PROGRESS_LOCK:
+        _PROGRESS["running"] = False
+        _PROGRESS["stage"] = "idle"
+        _PROGRESS["log"].clear()
+        _PROGRESS["last_error"] = None
+    try:
+        retriever.invalidate_cache()
+    except Exception:
+        pass
+
 # 全局进度状态
 _PROGRESS: dict[str, Any] = {
     "running": False,
@@ -993,8 +1014,6 @@ def api_extract_threads_all() -> dict:
 
 
 # ============== 叙事结构分析 ==============
-
-_STRUCT_ANA = None
 
 def _get_struct() -> structure.StructureAnalyzer:
     global _STRUCT_ANA
@@ -4494,3 +4513,75 @@ def _safe_json_list(raw) -> list:
         return json.loads(raw)
     except Exception:
         return []
+
+
+# ============== 工作区管理（每本小说独立数据库） ==============
+
+@router.get("/workspaces")
+def api_list_workspaces() -> dict:
+    """列出所有工作区，含章节数/字数统计"""
+    from novelai.config import list_workspaces, get_current_workspace_id
+    wss = list_workspaces()
+    cur = get_current_workspace_id()
+    for ws in wss:
+        ws["is_current"] = (ws["id"] == cur)
+        # 读章节数/字数
+        try:
+            from novelai.db import Database
+            db = Database(ws["db_path"])
+            row = db.query_one("SELECT COUNT(*) AS n, COALESCE(SUM(word_count),0) AS w FROM chapter")
+            ws["chapter_count"] = row["n"] if row else 0
+            ws["word_count"] = row["w"] if row else 0
+        except Exception:
+            ws["chapter_count"] = 0
+            ws["word_count"] = 0
+    return {"workspaces": wss, "current": cur}
+
+
+@router.get("/workspaces/current")
+def api_current_workspace() -> dict:
+    from novelai.config import get_current_workspace_id, get_current_db_path
+    ws_id = get_current_workspace_id()
+    return {"id": ws_id, "db_path": str(get_current_db_path())}
+
+
+@router.post("/workspaces/create")
+def api_create_workspace(req: dict = Body(default_factory=dict)) -> dict:
+    """建新工作区 + 切换 + 初始化 project"""
+    from novelai.config import create_workspace
+    title = (req.get("title") or "未命名小说").strip()
+    info = create_workspace(title)
+    # 切换 CONFIG.db_path + 重置缓存
+    CONFIG.db_path = Path(info["db_path"])
+    reset_db()
+    # 初始化 project 表
+    db = get_db()
+    kb.get_or_create_project(db)
+    kb.update_project(db, title=title)
+    return {"ok": True, "id": info["id"], "db_path": info["db_path"]}
+
+
+@router.post("/workspaces/switch")
+def api_switch_workspace(req: dict = Body(default_factory=dict)) -> dict:
+    """切换当前工作区"""
+    from novelai.config import switch_workspace as _switch
+    ws_id = req.get("id")
+    if not ws_id:
+        raise HTTPException(400, "id required")
+    try:
+        new_path = _switch(ws_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    CONFIG.db_path = Path(new_path)
+    reset_db()
+    return {"ok": True, "id": ws_id}
+
+
+@router.delete("/workspaces/{ws_id}")
+def api_delete_workspace(ws_id: str) -> dict:
+    from novelai.config import delete_workspace as _delete
+    try:
+        _delete(ws_id)
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}

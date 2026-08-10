@@ -289,17 +289,64 @@ h4 { font-size: 13px; font-weight: 700; color: var(--fg); margin: 0 0 6px; lette
 }
 
 .brand { display: flex; align-items: center; gap: 8px; min-width: 160px; }
-.brand .brand-name {
+.brand .meta { color: var(--fg-muted); font-size: 11px; font-weight: 500; }
+
+/* 工作区切换器（顶栏左侧按钮） */
+.ws-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px 5px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
   font-size: 14px;
   font-weight: 700;
-  color: var(--fg);
-  letter-spacing: 0.2px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  max-width: 240px;
+  transition: background 0.15s;
+}
+.ws-switcher:hover { background: var(--bg-hover); }
+.ws-switcher-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
+  letter-spacing: 0.2px;
 }
-.brand .meta { color: var(--fg-muted); font-size: 11px; font-weight: 500; }
+.ws-switcher-caret { color: var(--fg-muted); font-size: 11px; flex-shrink: 0; }
+
+/* 工作区浮层（body 级，与工具菜单同级） */
+.ws-menu {
+  position: fixed;
+  top: 52px;
+  left: 14px;
+  width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-glass-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: var(--lg-edge), var(--lg-shadow);
+  padding: 6px;
+  z-index: var(--z-dropdown);
+  animation: tmPopIn 0.16s ease;
+}
+.ws-menu::-webkit-scrollbar { width: 6px; }
+.ws-menu::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg-dim) 28%, transparent); border-radius: 3px; }
+.ws-item {
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ws-item:hover { background: var(--bg-hover); }
+.ws-item.ws-current { background: var(--accent-soft); }
+.ws-item-title { font-size: 13px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-item-meta { font-size: 11px; color: var(--fg-muted); margin-top: 2px; }
+.ws-menu-footer { padding: 6px 6px 4px; border-top: 1px solid var(--border-glass); margin-top: 4px; }
+.ws-menu-footer .btn { width: 100%; justify-content: center; }
 
 .kpis { display: flex; gap: 6px; flex: 1; }
 .kpi {

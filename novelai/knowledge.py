@@ -901,18 +901,23 @@ def add_thread(
     thread_type: str = "foreshadow",
     status: str = "planted",
     planted_chapter_id: int | None = None,
+    payoff_chapter_id: int | None = None,
     related_characters: list[int] | None = None,
     related_events: list[int] | None = None,
+    confidence: float = 0.7,
     notes: str = "",
 ) -> int:
     return db.insert(
         """INSERT INTO plot_thread(title, description, thread_type, status,
-                                   planted_chapter_id, related_characters,
-                                   related_events, notes)
-           VALUES(?,?,?,?,?,?,?,?)""",
+                                   planted_chapter_id, payoff_chapter_id,
+                                   related_characters, related_events,
+                                   confidence, notes)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
         (title, description, thread_type, status, planted_chapter_id,
+         payoff_chapter_id,
          Database.to_json(related_characters or []),
-         Database.to_json(related_events or []), notes),
+         Database.to_json(related_events or []),
+         confidence, notes),
     )
 
 

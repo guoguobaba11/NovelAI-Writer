@@ -292,13 +292,15 @@ def build_chapter_context(
     prev_chapter = kb.get_prev_chapter(db, chapter_idx)  # idx 可能跳号，取实际上一章
     if prev_chapter:
         prev_summary = prev_chapter.get("summary") or ""
-        # UNFINISHED_ACTION 标记写在上一章的【章节摘要】末尾
-        # （见 prompts.SUMMARIZE_SYSTEM："末尾必须有一行 UNFINISHED_ACTION: ..."），
-        # 不是写在其事件的 summary 里。
-        if prev_summary:
+        # H4 修复：优先读 chapter.unfinished_action（consistency 检查写入的结构化字段）
+        prev_unfinished = (prev_chapter.get("unfinished_action") or "").strip()
+        # 回退：从 summary 末尾正则提取 UNFINISHED_ACTION 标记
+        if not prev_unfinished and prev_summary:
             m = re.search(r"UNFINISHED_ACTION[:：]\s*(.+)", prev_summary)
             if m and m.group(1).strip():
                 prev_unfinished = m.group(1).strip()
+        if not prev_unfinished:
+            prev_unfinished = "（无）"
         # 上一章 final_text 的最后几行作为承接提示
         if prev_chapter.get("final_text"):
             tail = prev_chapter["final_text"][-400:]

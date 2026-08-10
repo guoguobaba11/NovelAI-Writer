@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS plot_thread (
     resolved_chapter_id INTEGER,
     related_characters TEXT,     -- JSON list
     related_events TEXT,         -- JSON list
+    confidence REAL DEFAULT 0.7, -- AI 抽取置信度 0.0~1.0（过滤误报伏笔）
     notes TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_thread_status ON plot_thread(status);
@@ -377,12 +378,20 @@ class Database:
                             pass  # 已存在（并发初始化或部分迁移），跳过
             if _table_exists("chapter"):
                 ch_cols = {r["name"] for r in conn.execute("PRAGMA table_info(chapter)")}
-                for col, decl in {"volume_idx": "INTEGER", "import_source": "TEXT"}.items():
+                for col, decl in {"volume_idx": "INTEGER", "import_source": "TEXT", "unfinished_action": "TEXT"}.items():
                     if col not in ch_cols:
                         try:
                             conn.execute(f"ALTER TABLE chapter ADD COLUMN {col} {decl}")
                         except Exception:
                             pass
+            # plot_thread 迁移：加 confidence 列
+            if _table_exists("plot_thread"):
+                pt_cols = {r["name"] for r in conn.execute("PRAGMA table_info(plot_thread)")}
+                if "confidence" not in pt_cols:
+                    try:
+                        conn.execute("ALTER TABLE plot_thread ADD COLUMN confidence REAL DEFAULT 0.7")
+                    except Exception:
+                        pass
 
     @contextmanager
     def connect(self):

@@ -480,6 +480,8 @@ def extract_threads_for_chapter(db: Database, ai: AIClient, chapter_idx: int) ->
                 thread_type=thread_type,
                 status=status,
                 planted_chapter_id=planted_id,
+                payoff_chapter_id=payoff_id,  # C2 修复：新伏笔也记录 payoff 章节
+                confidence=confidence,  # C1 修复：保留 AI 置信度
             )
         except Exception:
             continue
@@ -717,6 +719,11 @@ def write_chapter_pipeline(
 
     # 自动尝试修复（仅对 high severity 触发）
     attempt = 0
+    # H5 修复：累积每轮 consistency 检查发现的 new_facts（避免 auto-fix 覆盖丢失中途发现的事实）
+    all_extracted_facts = []
+    if isinstance(report, dict):
+        for f in (report.get("new_facts_extracted") or []):
+            all_extracted_facts.append(f)
     while attempt < auto_fix_retries and any(i.get("severity") == "high" for i in issues):
         attempt += 1
         # 在正文中标注问题位置，帮助 LLM 精确定位
@@ -750,6 +757,10 @@ def write_chapter_pipeline(
         # 重新检查
         report = run_consistency_check(db, ai, chapter_idx, text)
         issues = report.get("issues", []) or []
+        # H5：累积本轮发现的新事实
+        if isinstance(report, dict):
+            for f in (report.get("new_facts_extracted") or []):
+                all_extracted_facts.append(f)
 
     # auto-fix 后重新生成摘要和事件（确保与最终正文一致）
     if attempt > 0:
@@ -793,13 +804,15 @@ def write_chapter_pipeline(
                     (Database.to_json(mapped), seq_to_id[i]),
                 )
 
-    # 写终稿
+    # 写终稿（H4：同时写入 unfinished_action 供下一章承接）
+    unfinished = (report.get("unfinished_action_at_end") or "").strip() if isinstance(report, dict) else ""
     kb.update_chapter(
         db, ch_id,
         draft=text,
         final_text=text,
         summary=summary,
         word_count=len(text),
+        unfinished_action=unfinished or None,
     )
 
     # 持久化报告
@@ -812,10 +825,17 @@ def write_chapter_pipeline(
         raw_response=json.dumps(report, ensure_ascii=False),
     )
 
-    # 抽取新事实（可选）
+    # 抽取新事实（可选）— H5：使用 auto-fix 全程累积的 all_extracted_facts，按 content 去重
     new_facts = []
-    if CONFIG.writer.enable_fact_extraction and isinstance(report, dict):
-        for f in (report.get("new_facts_extracted") or []):
+    if CONFIG.writer.enable_fact_extraction:
+        seen_contents = set()
+        deduped_facts = []
+        for f in all_extracted_facts:
+            c = (f.get("content") or "").strip()
+            if c and c not in seen_contents:
+                seen_contents.add(c)
+                deduped_facts.append(f)
+        for f in deduped_facts:
             try:
                 # known_by 可能是 "public" 或角色名列表
                 kb_list = f.get("known_by") or []

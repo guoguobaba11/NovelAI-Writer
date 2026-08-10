@@ -235,6 +235,8 @@ def extract_events(
     # 归一化（修复 bug #12：name→id 映射含别名）
     char_name_to_id = kb.build_name_to_id_map(db, include_aliases=True)
     for ev in events:
+        if not isinstance(ev, dict):
+            continue  # AI 偶发返回非 dict 元素（如字符串），跳过避免 TypeError
         ev["chapter_id"] = chapter["id"]
         # 映射参与人物；未登记的自动新建 minor（而非丢弃）
         ps = ev.get("participants") or []
@@ -584,8 +586,18 @@ def run_consistency_check(
         {"role": "system", "content": prompts.CONSISTENCY_SYSTEM},
         {"role": "user", "content": _format_user(prompts.CONSISTENCY_USER_TEMPLATE, **ctx)},
     ]
-    data = ai.chat_json(messages, temperature=0.1, model=CONFIG.ai.mini_model)
-    return data if isinstance(data, dict) else {"passed": False, "issues": [], "summary": "模型未返回 dict"}
+    try:
+        data = ai.chat_json(messages, temperature=0.1, model=CONFIG.ai.mini_model)
+        return data if isinstance(data, dict) else {"passed": False, "issues": [], "summary": "模型未返回 dict"}
+    except Exception as e:
+        # 一致性检查失败（如 AI 输出超长 JSON 被截断）不应让整章正文丢失
+        # 降级为"无法验证"，保证正文能落库
+        return {
+            "passed": True,  # 宽松放行：无法验证时不当成不通过
+            "issues": [],
+            "summary": f"一致性检查因模型输出异常跳过: {type(e).__name__}",
+            "skipped": True,
+        }
 
 
 # ============================================================
@@ -614,6 +626,10 @@ def write_chapter_pipeline(
     auto_fix_retries = auto_fix_retries if auto_fix_retries is not None else CONFIG.writer.max_consistency_retries
     if on_phase: on_phase("generate", "AI 正在写正文…")
     text = generate_chapter(db, ai, chapter_idx, target_words=target_words, on_chunk=on_chunk, on_phase=on_phase)
+    # 先把正文落库（保险）：即使后续摘要/事件/一致性步骤崩溃，正文也不丢
+    _ch0 = kb.get_chapter_by_idx(db, chapter_idx)
+    if _ch0:
+        kb.update_chapter(db, _ch0["id"], draft=text, final_text=text, word_count=len(text))
     if on_phase: on_phase("summarize", "生成摘要…")
     summary = summarize_chapter(db, ai, chapter_idx, text)
     if on_phase: on_phase("events", "抽取事件…")

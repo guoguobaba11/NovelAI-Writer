@@ -426,7 +426,9 @@ EVENT_EXTRACT_SYSTEM = """你是叙事结构分析师。请从本章正文中抽
 - title: 简短名词短语
 - summary: 一句话
 - story_time_offset: 在本章内的相对时间偏移（0.0 ~ 1.0）
-- event_type: action/dialogue/revelation/turning_point/discovery/decision
+- event_type: action/dialogue/revelation/turning_point/discovery/decision/death/disappearance
+  - death: 角色死亡（仅真正死亡，重伤不算）。participants 必须含该角色。
+  - disappearance: 角色失踪/下落不明/被带走消失。participants 必须含该角色。
 - location
 - participants: 角色名列表
 - importance: 1-5

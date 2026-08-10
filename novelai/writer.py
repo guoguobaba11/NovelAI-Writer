@@ -216,8 +216,20 @@ def summarize_chapter(db: Database, ai: AIClient, chapter_idx: int, chapter_text
             outline=chapter.get("outline", ""),
         )},
     ]
-    summary = ai.chat(messages, temperature=0.3, model=CONFIG.ai.mini_model).strip()
-    return summary
+    try:
+        summary = ai.chat(messages, temperature=0.3, model=CONFIG.ai.mini_model).strip()
+        return summary
+    except Exception as e:
+        # 降级：AI 失败时用正文开头作摘要，保证 pipeline 不中断
+        # 末尾补 UNFINISHED_ACTION 占位，让下一章承接逻辑有内容可读
+        fallback = (chapter_text or "").strip().replace("\n", " ")[:200]
+        log_msg = f"[summarize 降级 {type(e).__name__}] "
+        try:
+            from .errors import log_exception
+            log_exception("summarize_chapter", e)
+        except Exception:
+            pass
+        return f"{fallback}…\n\nUNFINISHED_ACTION：（摘要生成失败，未能提取）"
 
 
 def extract_events(
@@ -260,7 +272,7 @@ def extract_events(
                 continue
             cid = char_name_to_id.get(p)
             if not cid:
-                if len(p) < 2 or p in ("某", "众人", "旁人", "众人皆"):
+                if len(p) < 2 or p in ("某", "众人", "旁人", "众人皆") or p.isdigit():
                     continue
                 try:
                     cid = kb.add_character(db, p, role="minor", basic_info="（抽取自动创建）")
@@ -352,7 +364,7 @@ def extract_events_for_chapter(db: Database, ai: AIClient, chapter_idx: int) -> 
             if not cid:
                 # 未登记人物：自动新建 minor 角色（而非丢弃），让小人物也能入库
                 # 跳过明显非人名的（如"某"、"众人"、纯数字、过短）
-                if len(p) < 2 or p in ("某", "众人", "旁人", "众人皆"):
+                if len(p) < 2 or p in ("某", "众人", "旁人", "众人皆") or p.isdigit():
                     continue
                 try:
                     cid = kb.add_character(db, p, role="minor", basic_info="（抽取自动创建）")
@@ -658,6 +670,8 @@ def write_chapter_pipeline(
 
     # BUG 修复：AI 返回的 cause_event_ids 是「本章内事件序号」(1-based)，不是 db id。
     # 与下方 auto-fix 重抽路径同逻辑：先占位插入收集真实 id，再重映射回填。
+    # M2 修复：入库前先清旧事件，防止重写章节时事件翻倍
+    db.execute("DELETE FROM event WHERE chapter_id=?", (ch_id,))
     seq_to_id: dict[int, int] = {}
     for i, ev in enumerate(events, 1):
         st = ev.get("story_time_offset")
@@ -728,7 +742,11 @@ def write_chapter_pipeline(
             {"role": "system", "content": prompts.FIX_SYSTEM},
             {"role": "user", "content": fix_prompt},
         ]
-        text = ai.chat(messages, temperature=0.6).strip()
+        # H3 修复：auto-fix 重写失败时 break 保留当前 best text，不让异常冒泡
+        try:
+            text = ai.chat(messages, temperature=0.6).strip()
+        except Exception:
+            break  # 重写失败，保留当前 text 退出循环
         # 重新检查
         report = run_consistency_check(db, ai, chapter_idx, text)
         issues = report.get("issues", []) or []
@@ -736,14 +754,11 @@ def write_chapter_pipeline(
     # auto-fix 后重新生成摘要和事件（确保与最终正文一致）
     if attempt > 0:
         summary = summarize_chapter(db, ai, chapter_idx, text)
-        # 清除旧事件，重新抽取
-        old_events = kb.list_events(db, chapter_id=ch_id)
-        for old_ev in old_events:
-            try:
-                db.execute("DELETE FROM event WHERE id=?", (old_ev["id"],))
-            except Exception:
-                pass
-        events = extract_events(db, ai, chapter_idx, text, summary)
+        # H2 修复：先抽取新事件，成功后再删旧事件（避免新抽崩溃导致事件净丢失）
+        new_events = extract_events(db, ai, chapter_idx, text, summary)
+        # 新事件抽取成功，安全删除旧事件
+        db.execute("DELETE FROM event WHERE chapter_id=?", (ch_id,))
+        events = new_events
         # BUG 修复：AI 返回的 cause_event_ids 是「本章内的事件序号」(1-based)，
         # 不是数据库 id。先全部插入收集真实 id，再把序号重映射成 id 后回填，
         # 否则因果链图/逻辑扫描器会用错误的 id 拼边（events.find(x.id===seq) 永远找错）。

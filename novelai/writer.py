@@ -69,12 +69,26 @@ def generate_outline(
         idx = ch["idx"]
         pov_name = ch.get("pov_character") or ""
         pov_id = char_name_to_id.get(pov_name)
+        # outline 拼接：摘要 + 承接 + 钩子 + 关键事件(beats) + 伏笔(threads_touched)
+        # beats/threads_touched 是 AI 规划的"本章必须覆盖要点"，写正文时必须能看到
+        outline_parts = [ch.get("summary", "")]
+        if ch.get("causal_link"):
+            outline_parts.append(f"\n\n【承接】{ch['causal_link']}")
+        if ch.get("hook"):
+            outline_parts.append(f"\n\n【钩子】{ch['hook']}")
+        beats = ch.get("beats") or []
+        if beats:
+            outline_parts.append("\n\n【关键事件（本章必须覆盖）】\n" + "\n".join(f"- {b}" for b in beats))
+        tt = ch.get("threads_touched") or []
+        if tt:
+            outline_parts.append("\n\n【本章应推进的伏笔/线索】\n" + "、".join(tt))
+        outline_text = "".join(outline_parts)
         existing = kb.get_chapter_by_idx(db, idx)
         if existing:
             kb.update_chapter(
                 db, existing["id"],
                 title=ch.get("title", existing["title"]),
-                outline=ch.get("summary", "") + "\n\n【承接】" + ch.get("causal_link","") + (f"\n\n【钩子】{ch.get('hook','')}" if ch.get("hook") else ""),
+                outline=outline_text,
                 story_time_start=ch.get("story_time"),
                 story_time_end=ch.get("story_time"),
                 location=ch.get("location", existing.get("location","")),
@@ -85,7 +99,7 @@ def generate_outline(
                 db,
                 idx=idx,
                 title=ch.get("title", f"第{idx}章"),
-                outline=ch.get("summary", "") + "\n\n【承接】" + ch.get("causal_link","") + (f"\n\n【钩子】{ch.get('hook','')}" if ch.get("hook") else ""),
+                outline=outline_text,
                 story_time_start=ch.get("story_time"),
                 story_time_end=ch.get("story_time"),
                 location=ch.get("location", ""),

@@ -399,7 +399,7 @@ def extract_events_for_chapter(db: Database, ai: AIClient, chapter_idx: int) -> 
             continue
         raw = ev.get("cause_event_ids") or []
         mapped = [seq_to_id[int(x)] for x in raw
-                  if isinstance(x, (int, float)) and int(x) in seq_to_id]
+                  if isinstance(x, (int, float, str)) and str(x).isdigit() and int(x) in seq_to_id]
         if mapped:
             db.execute(
                 "UPDATE event SET cause_event_ids=? WHERE id=?",
@@ -700,7 +700,7 @@ def write_chapter_pipeline(
             continue
         raw = ev.get("cause_event_ids") or []
         mapped = [seq_to_id[int(x)] for x in raw
-                  if isinstance(x, (int, float)) and int(x) in seq_to_id]
+                  if isinstance(x, (int, float, str)) and str(x).isdigit() and int(x) in seq_to_id]
         if mapped:
             db.execute(
                 "UPDATE event SET cause_event_ids=? WHERE id=?",
@@ -767,9 +767,11 @@ def write_chapter_pipeline(
         summary = summarize_chapter(db, ai, chapter_idx, text)
         # H2 修复：先抽取新事件，成功后再删旧事件（避免新抽崩溃导致事件净丢失）
         new_events = extract_events(db, ai, chapter_idx, text, summary)
-        # 新事件抽取成功，安全删除旧事件
-        db.execute("DELETE FROM event WHERE chapter_id=?", (ch_id,))
-        events = new_events
+        # 新事件抽取成功且非空，才安全删除旧事件；否则保留旧事件（避免净丢失）
+        if new_events:
+            db.execute("DELETE FROM event WHERE chapter_id=?", (ch_id,))
+            events = new_events
+        # 若 new_events 为空（LLM 失败降级），保留旧事件，events 变量沿用旧值
         # BUG 修复：AI 返回的 cause_event_ids 是「本章内的事件序号」(1-based)，
         # 不是数据库 id。先全部插入收集真实 id，再把序号重映射成 id 后回填，
         # 否则因果链图/逻辑扫描器会用错误的 id 拼边（events.find(x.id===seq) 永远找错）。
@@ -797,7 +799,7 @@ def write_chapter_pipeline(
         for i, ev in enumerate(events, 1):
             raw = ev.get("cause_event_ids") or []
             mapped = [seq_to_id[int(x)] for x in raw
-                      if isinstance(x, (int, float)) and int(x) in seq_to_id]
+                      if isinstance(x, (int, float, str)) and str(x).isdigit() and int(x) in seq_to_id]
             if mapped:
                 db.execute(
                     "UPDATE event SET cause_event_ids=? WHERE id=?",

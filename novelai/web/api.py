@@ -2262,9 +2262,11 @@ class EditorHarness:
                 "请只输出选中片段修改后的版本。"
             )
         else:
+            # 整章模式：长章节截断防超 token（保留开头+结尾，中间省略）
+            full_text = _smart_text_preview(self.current_text, instruction, max_chars=8000)
             user = (
                 f"## 用户指令\n{instruction}\n\n"
-                f"## 当前章节正文\n{self.current_text}\n\n"
+                f"## 当前章节正文\n{full_text}\n\n"
                 "请输出修改后的完整章节正文。"
             )
         self._full_prompt = system + "\n\n" + user
@@ -2501,7 +2503,7 @@ async def api_editor_ai_edit(idx: int = ApiPath(ge=1, description="章节号, �
             q: queue.Queue = queue.Queue()
             def _gen():
                 try:
-                    for chunk in ai.chat_stream(messages, temperature=0.6, max_tokens=4000):
+                    for chunk in ai.chat_stream(messages, temperature=0.6, max_tokens=max(CONFIG.ai.max_tokens, 8000)):
                         q.put(("chunk", chunk))
                     q.put(("done", None))
                 except Exception as e:
@@ -2571,7 +2573,7 @@ async def api_editor_ai_edit(idx: int = ApiPath(ge=1, description="章节号, �
                     q2: queue.Queue = queue.Queue()
                     def _gen2():
                         try:
-                            for chunk in ai.chat_stream(retry_messages, temperature=0.5, max_tokens=4000):
+                            for chunk in ai.chat_stream(retry_messages, temperature=0.5, max_tokens=max(CONFIG.ai.max_tokens, 8000)):
                                 q2.put(("chunk", chunk))
                             q2.put(("done", None))
                         except Exception as e:

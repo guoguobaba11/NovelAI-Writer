@@ -310,11 +310,10 @@ def build_chapter_context(
     # 临近章节事件摘要（带时间戳）
     all_chapters = kb.list_chapters(db)
     recent_summaries_parts = []
-    for ch in all_chapters:
-        if ch["idx"] >= chapter_idx:
-            continue
-        if ch["idx"] < chapter_idx - recent_window:
-            continue
+    # 窗口：取本章之前的最近 recent_window 章（按 idx 感知跳号，不用绝对减法）
+    prev_chapters = [ch for ch in all_chapters if ch["idx"] < chapter_idx]
+    window_chapters = prev_chapters[-recent_window:] if recent_window > 0 else []
+    for ch in window_chapters:
         ch_events = kb.list_events(db, ch["id"])
         if ch["summary"]:
             recent_summaries_parts.append(
@@ -349,6 +348,10 @@ def build_chapter_context(
         # 若无明确触发但状态是 developing 也带上
         if t["status"] == "developing" or trigger:
             thread_parts.append(_thread_brief(t))
+    # top-K 裁剪：长篇可能有几十条伏笔，全塞会超 token。优先 developing，最多 15 条
+    MAX_THREADS = 15
+    if len(thread_parts) > MAX_THREADS:
+        thread_parts = thread_parts[:MAX_THREADS]
     threads_text = "\n".join(thread_parts) if thread_parts else "（无）"
 
     # 借鉴 AI_NovelGenerator 的 next_chapter_draft：前瞻下一章，让 AI 为下一章冲突埋种子
@@ -387,9 +390,14 @@ def build_consistency_context(
     ctx = build_chapter_context(db, chapter_idx, recent_window=5)
     ctx["chapter_text"] = chapter_text
 
-    # 把所有事实一并给出（让模型有全量 ground truth）
+    # 事实库：top-K 裁剪（长篇可能有几百条事实，全塞会超 token 导致 JSON 截断）
     all_facts = _cached("facts", db, kb.list_facts)
-    ctx["world_facts"] = "\n".join(_fact_brief(f) for f in all_facts) if all_facts else "（事实库为空）"
+    if all_facts:
+        # 按 established_chapter_id 降序（近章事实优先），最多 60 条
+        sorted_facts = sorted(all_facts, key=lambda f: f.get("established_chapter_id") or 0, reverse=True)
+        ctx["world_facts"] = "\n".join(_fact_brief(f) for f in sorted_facts[:60])
+    else:
+        ctx["world_facts"] = "（事实库为空）"
 
     # 临近事件 + 时间戳
     parts = []
@@ -405,9 +413,12 @@ def build_consistency_context(
 
     # 借鉴 AI_NovelGenerator 的 plot_arcs 思路：注入所有待回收伏笔（developing/planted）
     # 让一致性审查检查"本章是否遗忘了应推进的伏笔"
+    # top-K 裁剪：长篇可能有几十条，全塞超 token 导致 JSON 截断
     active_threads = kb.list_threads(db, status="planted") + kb.list_threads(db, status="developing")
     if active_threads:
-        ctx["active_threads"] = "\n".join(_thread_brief(t) for t in active_threads)
+        # developing 优先，最多 20 条
+        sorted_at = sorted(active_threads, key=lambda t: 0 if t.get("status") == "developing" else 1)
+        ctx["active_threads"] = "\n".join(_thread_brief(t) for t in sorted_at[:20])
     else:
         ctx["active_threads"] = "（无）"
     return ctx

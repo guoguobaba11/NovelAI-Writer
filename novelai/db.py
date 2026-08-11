@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS volume (
 );
 CREATE INDEX IF NOT EXISTS idx_volume_idx ON volume(idx);
 
+-- 全书滚动摘要（分层记忆 L3：每卷结束时更新，让写第 N 章时能看到全局剧情进展）
+CREATE TABLE IF NOT EXISTS book_summary (
+    id INTEGER PRIMARY KEY,
+    summary TEXT NOT NULL,          -- 全书截至当前卷的压缩摘要
+    chapter_range TEXT,             -- 如 "1-50"
+    updated_at REAL NOT NULL
+);
+
 -- 人物
 CREATE TABLE IF NOT EXISTS character (
     id INTEGER PRIMARY KEY,

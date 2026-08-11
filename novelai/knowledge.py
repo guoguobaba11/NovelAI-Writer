@@ -115,6 +115,21 @@ def update_volume(db: Database, volume_id: int, **fields: Any) -> None:
     db.execute(f"UPDATE volume SET {cols} WHERE id=?", vals)
 
 
+# ============== Book Summary（分层记忆 L3） ==============
+
+def get_book_summary(db: Database) -> dict | None:
+    """读最新一条全书摘要"""
+    return db.query_one("SELECT * FROM book_summary ORDER BY id DESC LIMIT 1")
+
+
+def save_book_summary(db: Database, summary: str, chapter_range: str = "") -> int:
+    """写入新的全书摘要（保留历史版本，读时取最新）"""
+    return db.insert(
+        "INSERT INTO book_summary(summary, chapter_range, updated_at) VALUES(?,?,?)",
+        (summary, chapter_range, Database.now()),
+    )
+
+
 # ============== Character ==============
 
 def add_character(

@@ -224,6 +224,12 @@ FIX_SYSTEM = """你是一位资深长篇小说审校编辑。你的任务是对�
 CHAPTER_USER_TEMPLATE = """【项目梗概】
 {synopsis}
 
+【全书进展摘要（截至当前卷，务必遵守已有进展）】
+{book_summary}
+
+【本卷进展（近期剧情线，保持连贯）】
+{volume_summary}
+
 【项目文风】
 {style}
 

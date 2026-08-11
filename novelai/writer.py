@@ -860,6 +860,12 @@ def write_chapter_pipeline(
             except Exception:
                 pass
 
+    # 分层记忆：更新 volume synopsis（L2）和 book summary（L3）
+    try:
+        _update_layered_memory(db, ai, chapter_idx, ch_id, summary)
+    except Exception:
+        pass  # 记忆更新失败不影响写章结果
+
     return {
         "chapter_id": ch_id,
         "text": text,
@@ -869,3 +875,77 @@ def write_chapter_pipeline(
         "new_facts": new_facts,
         "retries": attempt,
     }
+
+
+# ============================================================
+# 分层记忆：更新 volume synopsis（L2）和 book summary（L3）
+# ============================================================
+
+def _update_layered_memory(db: Database, ai: AIClient, chapter_idx: int, ch_id: int, chapter_summary: str) -> None:
+    """写章后更新分层记忆。
+    L2: 把本章 summary 追加到当前卷 synopsis，超 800 字时压缩
+    L3: 检测跨卷时，把上一卷 synopsis 并入全书摘要，超 600 字时压缩
+    """
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        return
+    vol_idx = chapter.get("volume_idx")
+    if not vol_idx:
+        # 无卷信息：用"默认卷"（vol_idx=1）存 L2，并写回 chapter.volume_idx
+        vol_idx = 1
+        db.execute("UPDATE chapter SET volume_idx=? WHERE id=?", (vol_idx, ch_id))
+    vol = kb.get_volume_by_idx(db, vol_idx)
+    if not vol:
+        # 首次：建卷
+        kb.add_volume(db, idx=vol_idx, title=f"第{vol_idx}卷")
+        vol = kb.get_volume_by_idx(db, vol_idx)
+
+    # L2: 更新本卷 synopsis
+    vol_synopsis = (vol.get("synopsis") if vol else "") or ""
+    ch_title = chapter.get("title", f"第{chapter_idx}章")
+    new_line = f"第{chapter_idx}章《{ch_title}》:{(chapter_summary or '')[:150]}"
+    if vol_synopsis and vol_synopsis != "（暂无）":
+        vol_synopsis += f"\n{new_line}"
+    else:
+        vol_synopsis = new_line
+
+    # 超 800 字时压缩（用 mini_model）
+    if len(vol_synopsis) > 800:
+        try:
+            vol_synopsis = _compress_summary(ai, vol_synopsis, max_chars=600, desc="本卷进展")
+        except Exception:
+            vol_synopsis = vol_synopsis[-600:]  # 兜底：截断保留最近
+
+    # 写回 volume.synopsis
+    vol_id = kb.get_volume_by_idx(db, vol_idx)
+    if vol_id:
+        kb.update_volume(db, vol_id["id"], synopsis=vol_synopsis)
+
+    # L3: 检测跨卷（上一章的 volume_idx 与本章不同）
+    prev_ch = kb.get_prev_chapter(db, chapter_idx)
+    if prev_ch and prev_ch.get("volume_idx") and prev_ch["volume_idx"] != vol_idx:
+        # 跨卷：把上一卷 synopsis 并入全书摘要
+        prev_vol = kb.get_volume_by_idx(db, prev_ch["volume_idx"])
+        prev_vol_syn = (prev_vol.get("synopsis") if prev_vol else "") or ""
+        if prev_vol_syn:
+            book_sum = kb.get_book_summary(db)
+            cur_book = (book_sum["summary"] if book_sum else "") or ""
+            combined = f"{cur_book}\n\n第{prev_ch['volume_idx']}卷:{prev_vol_syn}".strip()
+            if len(combined) > 600:
+                try:
+                    combined = _compress_summary(ai, combined, max_chars=500, desc="全书进展摘要")
+                except Exception:
+                    combined = combined[-500:]
+            all_chapters = kb.list_chapters(db)
+            max_idx = max((c["idx"] for c in all_chapters), default=chapter_idx)
+            kb.save_book_summary(db, combined, chapter_range=f"1-{max_idx}")
+
+
+def _compress_summary(ai: AIClient, text: str, max_chars: int = 600, desc: str = "摘要") -> str:
+    """用 mini_model 压缩摘要，保留关键剧情节点"""
+    messages = [
+        {"role": "system", "content": f"你是小说编辑。请把以下{desc}压缩到{max_chars}字以内，保留所有关键剧情节点、人物变化、伏笔进展，只删减重复和细节描写。直接输出压缩后的文本，不要解释。"},
+        {"role": "user", "content": text},
+    ]
+    result = ai.chat(messages, temperature=0.3, model=CONFIG.ai.mini_model).strip()
+    return result[:max_chars] if result else text[:max_chars]

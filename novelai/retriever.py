@@ -359,8 +359,36 @@ def build_chapter_context(
     next_chapter_title = next_chapter.get("title", "") if next_chapter else ""
     next_chapter_outline = (next_chapter.get("outline") or "") if next_chapter else ""
 
+    # 分层记忆 L3：全书摘要（截至当前卷）
+    book_sum = kb.get_book_summary(db)
+    book_summary_text = (book_sum["summary"] if book_sum else "（暂无，开篇阶段）")
+
+    # 分层记忆 L2：本卷进展（volume.synopsis）
+    volume_summary_text = "（暂无，第一卷开篇）"
+    ch_volume_idx = chapter.get("volume_idx")
+    if ch_volume_idx:
+        vol = kb.get_volume_by_idx(db, ch_volume_idx)
+        if vol and vol.get("synopsis"):
+            volume_summary_text = vol["synopsis"]
+
+    # 分层记忆 RAG：全本高重要性事件（importance≥4），上限 20 条，让 AI 看到全局关键节点
+    key_events = db.query(
+        "SELECT e.title, e.summary, e.story_time, e.event_type, c.idx as ch_idx "
+        "FROM event e JOIN chapter c ON e.chapter_id=c.id "
+        "WHERE e.importance>=4 AND c.idx<? ORDER BY e.story_time DESC LIMIT 20",
+        (chapter_idx,),
+    )
+    if key_events:
+        ke_parts = [f"第{e['ch_idx']}章 @{e['story_time']} [{e['event_type']}] {e['title']}：{(e['summary'] or '')[:40]}" for e in key_events]
+        key_events_text = "\n".join(ke_parts)
+    else:
+        key_events_text = "（暂无）"
+
     return {
         "synopsis": project.get("synopsis", ""),
+        "book_summary": book_summary_text,
+        "volume_summary": volume_summary_text,
+        "key_events": key_events_text,
         "style": project.get("style", ""),
         "pov_mode": project.get("pov_mode", "限知视角"),
         "outline": outline,

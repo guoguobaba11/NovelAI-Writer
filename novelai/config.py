@@ -112,7 +112,7 @@ class AIConfig:
 class WriterConfig:
     """检索/生成相关阈值。"""
     # 召回的最近章节摘要数
-    recent_chapter_window: int = 3
+    recent_chapter_window: int = 5  # 分层记忆 L1：最近 N 章详细事件（从 3 扩到 5）
     # 单章目标字数（中文字符）
     target_chapter_words: int = 10000  # 单章目标字数（长篇小说默认 1 万，网文可达 2 万）
     # 一致性检查最大重写次数

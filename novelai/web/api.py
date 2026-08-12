@@ -2148,6 +2148,14 @@ class EditorHarness:
         self._pre_issues: list[dict] = []
         self._post_issues: list[dict] = []
         self._context: dict[str, str] = {}
+        # 加载本章未解决批注（让 AI 改稿时参考作者的标注）
+        self.open_comments = []
+        if self.chapter:
+            try:
+                all_comments = kb.list_comments(db, chapter_id=self.chapter["id"])
+                self.open_comments = [c for c in all_comments if c.get("status") == "open"]
+            except Exception:
+                pass
 
     # ---- Step 1: 预分析 ----
     def pre_analyze(self) -> dict:
@@ -2272,6 +2280,16 @@ class EditorHarness:
                     )
             issue_block = "\n".join(issue_lines)
 
+        # 作者批注块：让 AI 参考作者的标注进行修改
+        comment_block = ""
+        if self.open_comments:
+            comment_lines = []
+            for c in self.open_comments[:8]:  # 上限 8 条防 token 爆炸
+                snippet = (c.get("snippet") or "")[:60]
+                body = (c.get("body") or "")[:120]
+                comment_lines.append(f"- 批注「{snippet}…」: {body}")
+            comment_block = "\n\n## 作者批注（修改时请参考这些标注）\n" + "\n".join(comment_lines)
+
         is_inline = bool(selection and selection.get("text"))
         if is_inline:
             output_instruction = (
@@ -2325,7 +2343,8 @@ class EditorHarness:
             f"{continuity_block}\n"
             f"{ctx['style_rules']}\n"
             f"{diagnosis}\n"
-            f"{issue_block}\n\n"
+            f"{issue_block}\n"
+            f"{comment_block}\n\n"
             f"{edit_principles}\n"
             f"{output_instruction}"
         )

@@ -1564,7 +1564,7 @@ function setStatusDialog(c) {
  hideModal();
  showCharacterDetail(c.id); // 刷新
  renderCharacters(); // 刷新列表 badge
- showToast("状态已更新");
+ showToast(`状态已更新 · 提示：已写章节可能需要检查一致性`, "info", 4000);
  } catch (e) { toastError("修改状态失败", e); }
  };
  });
@@ -5949,7 +5949,7 @@ function restoreVersionText(targetText, label) {
  updateEditorStats();
  setEditorStatus(`↶ 已恢复${label}（Ctrl+Shift+Z 可再回去，需手动保存才入新版）`);
  addLog("info", `[version] 恢复${label}（undo ${_undoStack.length} / redo ${_redoStack.length}）`);
- showToast(`↶ 已恢复${label}`, "info");
+ showToast(`↶ 已恢复${label} · 保存后知识库会同步`, "info", 4000);
  updateRedoButton();
 }
 
@@ -8022,10 +8022,12 @@ window.addEventListener("DOMContentLoaded", () => {
  pushUndoSnapshot("before-accept-all", true); // 保留撤销点
  $("#ed-text").value = STATE_EDITOR.lastAiText;
  updateEditorStats();
- editorSave();
+ await editorSave();
  STATE_EDITOR.lastAiText = "";
  $("#ed-ai-actions").style.display = "none";
  addLog("done", "[editor] 已整章替换 AI 输出");
+ // AI 整章替换后正文变化大，提示重抽知识库
+ setTimeout(() => _promptReindex(STATE_EDITOR.chapterIdx), 600);
  };
  const edRejectAll = document.getElementById("ed-ai-reject-all");
  if (edRejectAll) edRejectAll.onclick = async () => {

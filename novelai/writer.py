@@ -225,15 +225,15 @@ def summarize_chapter(db: Database, ai: AIClient, chapter_idx: int, chapter_text
         return summary
     except Exception as e:
         # 降级：AI 失败时用正文开头作摘要，保证 pipeline 不中断
-        # 末尾补 UNFINISHED_ACTION 占位，让下一章承接逻辑有内容可读
+        # 注意：不要在摘要里放 UNFINISHED_ACTION 占位符——
+        # retriever 的 prev_chapter_unfinished 正则会匹配到它，污染下一章 prompt
         fallback = (chapter_text or "").strip().replace("\n", " ")[:200]
-        log_msg = f"[summarize 降级 {type(e).__name__}] "
         try:
             from .errors import log_exception
             log_exception("summarize_chapter", e)
         except Exception:
             pass
-        return f"{fallback}…\n\nUNFINISHED_ACTION：（摘要生成失败，未能提取）"
+        return f"{fallback}…"
 
 
 def extract_events(
@@ -622,7 +622,11 @@ def run_consistency_check(
         data = ai.chat_json(messages, temperature=0.1, model=CONFIG.ai.mini_model)
         return data if isinstance(data, dict) else {"passed": False, "issues": [], "summary": "模型未返回 dict"}
     except Exception as e:
-        # 一致性检查失败（如 AI 输出超长 JSON 被截断）不应让整章正文丢失
+        # 编程错误（NameError/AttributeError/TypeError 等）不是"模型输出异常"，
+        # 必须重新抛出，否则会把 bug 静默降级为"宽松放行"，掩盖真正的问题
+        if isinstance(e, (NameError, AttributeError, TypeError, KeyError, ImportError)):
+            raise
+        # 一致性检查失败（如 AI 输出超长 JSON 被截断、API 超时）不应让整章正文丢失
         # 降级为"无法验证"，保证正文能落库
         return {
             "passed": True,  # 宽松放行：无法验证时不当成不通过
@@ -900,6 +904,10 @@ def write_chapter_pipeline(
         _update_layered_memory(db, ai, chapter_idx, ch_id, summary)
     except Exception:
         pass  # 记忆更新失败不影响写章结果
+
+    # 缓存失效：本章改变了正文/事件/事实/伏笔/摘要/记忆，
+    # 必须失效 retriever 缓存，否则下一章 build_chapter_context 在 60s 内读到旧数据
+    retriever.invalidate_cache()
 
     return {
         "chapter_id": ch_id,

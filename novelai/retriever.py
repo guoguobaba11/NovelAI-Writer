@@ -19,6 +19,7 @@ import time
 from typing import Any
 from . import knowledge as kb
 from .db import Database
+from .config import context_budget
 
 # 上下文缓存（project 不变时复用，减少 DB 查询）
 # BUG 修复：旧实现用单一全局 _cache["t"]，任一 key 刷新会重置所有 key 的 TTL，
@@ -419,6 +420,7 @@ def build_consistency_context(
     chapter_text: str,
 ) -> dict:
     """为一致性审查准备上下文（更广、更全）"""
+    budget = context_budget()
     ctx = build_chapter_context(db, chapter_idx, recent_window=budget["max_recent_window"])
     ctx["chapter_text"] = chapter_text
 

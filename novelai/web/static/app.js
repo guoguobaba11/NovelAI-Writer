@@ -1025,18 +1025,28 @@ function renderNewNovel() {
  barEl.style.cssText = "margin-top:8px";
  btn.parentElement.appendChild(barEl);
  }
+ let _curDone = 0, _curTotal = 1, _curMsg = "准备中…";
  const renderProgress = (done, total, msg) => {
- const pct = total > 0 ? Math.round(done / total * 100) : 0;
+ _curDone = done; _curTotal = total; _curMsg = msg || _curMsg;
+ _paintProgress();
+ };
+ const _paintProgress = () => {
+ const pct = _curTotal > 0 ? Math.round(_curDone / _curTotal * 100) : 0;
  const elapsed = Math.round((Date.now() - t0) / 1000);
+ // AI 调用期间用不确定动画提示"正在思考"
+ const thinking = _curDone < _curTotal;
  barEl.innerHTML = `
- <div style="background:var(--bg-card);border-radius:6px;height:8px;overflow:hidden;border:1px solid var(--border)">
+ <div style="background:var(--bg-card);border-radius:6px;height:8px;overflow:hidden;border:1px solid var(--border);position:relative">
  <div style="width:${pct}%;height:100%;background:var(--accent);transition:width .4s"></div>
+ ${thinking ? `<div class="nn-thinking-bar" style="position:absolute;top:0;left:0;height:100%;width:30%;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 40%,transparent),transparent);animation:nn-sweep 1.5s linear infinite"></div>` : ""}
  </div>
  <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--fg-muted)">
- <span>${ESC(msg || "准备中…")}</span>
- <span>${done}/${total} · ${elapsed}s</span>
+ <span>${thinking ? "⏳ " : ""}${ESC(_curMsg)}</span>
+ <span>${_curDone}/${_curTotal} · ${elapsed}s</span>
  </div>`;
  };
+ // 每秒刷新 elapsed 时间（即使没有 SSE 事件，时间也在走）
+ const _progTimer = setInterval(_paintProgress, 1000);
  try {
  statusEl.textContent = target > 20 ? `分批生成中（${target} 章，每批 20 章）…` : "AI 生成中…";
  renderProgress(0, 1, "准备中…");
@@ -1085,6 +1095,7 @@ function renderNewNovel() {
  statusEl.textContent = "失败";
  if (barEl) barEl.innerHTML = "";
  } finally {
+ clearInterval(_progTimer);
  btn.disabled = false;
  }
  };
@@ -1194,10 +1205,17 @@ function renderOutlineResult(result) {
  if (result.structural_notes) {
  html += `<div class="nn-notes"><div class="nn-notes-label">结构备注</div>${ESC(result.structural_notes)}</div>`;
  }
+ // 显式"下一步"CTA——不依赖面板自动切换，让用户在大纲列表底部就能看到入口
+ html += `<div style="margin-top:12px;padding:14px;background:color-mix(in srgb,var(--accent) 8%,transparent);border-radius:8px;text-align:center">
+ <div style="font-size:13px;margin-bottom:8px;color:var(--fg-muted)">✅ 大纲已生成 ${chapters.length} 章，可以开始撰写正文了</div>
+ <button class="btn primary" id="nn-go-write" style="font-size:14px;padding:8px 28px">下一步：撰写正文 →</button>
+ </div>`;
  $("#nn-outline-result").innerHTML = html;
  document.querySelectorAll("#nn-outline-result .nn-card").forEach(card => {
  card.querySelector(".nn-card-head").onclick = () => card.classList.toggle("nn-open");
  });
+ const goBtn = document.getElementById("nn-go-write");
+ if (goBtn) goBtn.onclick = () => { _nnStep = 3; _nnRenderStep(); };
  const expandBtn = document.getElementById("nn-toggle-expand");
  let allOpen = false;
  expandBtn.onclick = () => {
@@ -2903,7 +2921,20 @@ async function sendEditInstruction(instruction) {
  : `完成`;
  addLog("done", `[editor] AI 修改完成（${aiText.length} 字）· ${logMsg}`);
  } else if (data.error) {
+ // 后端验证阶段可能抛错发 error 而非 done，但流式文本已收到——仍允许采纳
+ if (aiText && aiText.trim().length > 50) {
+ try {
+ await renderAiParagraphs(aiText);
+ STATE_EDITOR.lastAiText = aiText;
+ $("#ed-ai-actions").style.display = "flex";
+ aiBubble.innerHTML = `<span style="color:var(--warning)">⚠ 验证异常：${ESC((data.error || "").slice(0, 80))}（文本已生成，可手动采纳）</span>`;
+ addLog("warn", `[ai] 验证异常但文本可用（${aiText.length} 字）: ${(data.error || "").slice(0, 80)}`);
+ } catch (renderErr) {
  aiBubble.innerHTML = `<span style="color:var(--danger)">✕ ${ESC(data.error)}</span>`;
+ }
+ } else {
+ aiBubble.innerHTML = `<span style="color:var(--danger)">✕ ${ESC(data.error)}</span>`;
+ }
  const prog = document.getElementById("ed-progress-bubble");
  if (prog) {
  prog.innerHTML = `<span style="color:var(--danger)">✕ ${ESC(data.error)}</span>`;
@@ -7015,7 +7046,24 @@ function _initWorkspaceSwitcher() {
  menu.style.display = "none";
  }
  };
- menu.addEventListener("click", (e) => {
+ menu.addEventListener("click", async (e) => {
+ // 删除按钮优先处理
+ const delBtn = e.target.closest(".ws-item-del");
+ if (delBtn) {
+ e.stopPropagation();
+ const id = delBtn.dataset.id;
+ if (!id) return;
+ const ok = await showConfirm(`确定删除工作区「${ESC(id)}」？\n该小说的所有数据（章节/角色/伏笔）将被永久删除，不可恢复。`, "! 删除工作区");
+ if (!ok) return;
+ try {
+ await API.del("/workspaces/" + encodeURIComponent(id));
+ _loadWorkspaceList();
+ showToast("工作区已删除");
+ } catch (err) {
+ toastError("删除失败", err);
+ }
+ return;
+ }
  const item = e.target.closest(".ws-item");
  if (!item) return;
  const id = item.dataset.id;
@@ -7041,12 +7089,22 @@ async function _loadWorkspaceList() {
  list.innerHTML = '<p style="padding:14px;color:var(--fg-muted);font-size:12px">加载中…</p>';
  try {
  const r = await API.get("/workspaces");
- list.innerHTML = r.workspaces.map(ws => `
- <div class="ws-item ${ws.is_current ? "ws-current" : ""}" data-id="${ESC(ws.id)}">
- <div class="ws-item-title">${ESC(ws.title || "未命名")}</div>
+ // 同名工作区附加 id 后缀区分（避免看起来重复）
+ const titleCount = {};
+ r.workspaces.forEach(ws => { const t = ws.title || "未命名"; titleCount[t] = (titleCount[t]||0)+1; });
+ list.innerHTML = r.workspaces.map(ws => {
+ const t = ws.title || "未命名";
+ const dupSuffix = titleCount[t] > 1 ? ` <span style="color:var(--fg-dim);font-size:10px">(${ESC(ws.id.slice(-6))})</span>` : "";
+ const delBtn = ws.is_current ? "" : `<button class="ws-item-del" data-id="${ESC(ws.id)}" title="删除此工作区" style="background:none;border:none;color:var(--fg-dim);cursor:pointer;padding:2px 6px;font-size:13px;flex-shrink:0">✕</button>`;
+ return `
+ <div class="ws-item ${ws.is_current ? "ws-current" : ""}" data-id="${ESC(ws.id)}" style="display:flex;align-items:center;justify-content:space-between">
+ <div style="flex:1;min-width:0">
+ <div class="ws-item-title">${ESC(t)}${dupSuffix}</div>
  <div class="ws-item-meta">${ws.chapter_count} 章 · ${(ws.word_count||0).toLocaleString()} 字${ws.is_current ? " · 当前" : ""}</div>
  </div>
- `).join("");
+ ${delBtn}
+ </div>`;
+ }).join("");
  } catch (e) {
  list.innerHTML = `<p style="color:var(--danger);font-size:12px;padding:14px">加载失败</p>`;
  }

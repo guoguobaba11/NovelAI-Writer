@@ -788,6 +788,7 @@ body.focus-mode #topbar { height: 0; opacity: 0; pointer-events: none; overflow:
 .nn-step.nn-active .nn-step-label { font-weight: 600; }
 .nn-panel { display: none; animation: fadeInUp 0.3s ease; }
 .nn-panel.nn-active { display: block; }
+@keyframes nn-sweep { 0% { left: -30%; } 100% { left: 100%; } }
 .nn-field { margin-bottom: 12px; }
 .nn-label {
   display: block;

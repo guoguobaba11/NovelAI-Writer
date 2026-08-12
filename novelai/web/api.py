@@ -2047,6 +2047,40 @@ def _build_daily_brief_issues(db: Database, chapter: dict, text: str) -> list[di
     return issues
 
 
+@router.get("/editor/chapter/{idx}/memory")
+def api_editor_memory(idx: int = ApiPath(ge=1, description="章节号, ≥1")) -> dict:
+    """分层记忆视图：展示 AI 写本章时掌握的所有记忆层"""
+    db = get_db()
+    chapter = kb.get_chapter_by_idx(db, idx)
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    ctx = retriever.build_chapter_context(db, idx, recent_window=CONFIG.writer.recent_chapter_window)
+
+    # L1: 最近 N 章摘要（逐章）
+    recent = []
+    all_chs = kb.list_chapters(db)
+    prev_chs = [c for c in all_chs if c["idx"] < idx]
+    for c in prev_chs[-CONFIG.writer.recent_chapter_window:]:
+        evs = kb.list_events(db, c["id"])
+        recent.append({
+            "idx": c["idx"],
+            "title": c.get("title", ""),
+            "summary": (c.get("summary") or "")[:200],
+            "event_count": len(evs),
+        })
+
+    return {
+        "ok": True,
+        "chapter_idx": idx,
+        "l3_book_summary": ctx.get("book_summary", ""),
+        "l2_volume_summary": ctx.get("volume_summary", ""),
+        "l1_recent_chapters": recent,
+        "key_events": ctx.get("key_events", ""),
+        "relevant_threads": ctx.get("relevant_threads", ""),
+        "recent_window": CONFIG.writer.recent_chapter_window,
+    }
+
+
 @router.get("/editor/chapter/{idx}/daily-brief")
 def api_editor_daily_brief(
     idx: int = ApiPath(ge=1, description="章节号, ≥1"),
@@ -2530,7 +2564,8 @@ async def api_editor_ai_edit(idx: int = ApiPath(ge=1, description="章节号, �
                 cat = iss.get("category", "?")
                 pre_cats[cat] = pre_cats.get(cat, 0) + 1
             pre_summary = "、".join(f"{k} {v}个" for k, v in pre_cats.items()) if pre_cats else "无明显问题"
-            yield f"data: {json.dumps({'phase': 'analyze_done', 'pre_analysis': pre, 'msg': f'扫描完成：{pre_summary}（{(_time.time()-t0)*1000:.0f}ms）', 'elapsed_ms': int((_time.time()-t0)*1000)}, ensure_ascii=False)}\n\n"
+            comment_hint = f"，参考 {len(harness.open_comments)} 条批注" if harness.open_comments else ""
+            yield f"data: {json.dumps({'phase': 'analyze_done', 'pre_analysis': pre, 'msg': f'扫描完成：{pre_summary}{comment_hint}（{(_time.time()-t0)*1000:.0f}ms）', 'elapsed_ms': int((_time.time()-t0)*1000)}, ensure_ascii=False)}\n\n"
 
             # Phase 2: 构建上下文
             yield f"data: {json.dumps({'phase': 'context', 'msg': '📚 正在收集上下文…'}, ensure_ascii=False)}\n\n"

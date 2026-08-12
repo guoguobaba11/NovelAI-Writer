@@ -2419,6 +2419,17 @@ body.left-open .editor-left .ed-left-rail .ed-rail-btn { width: auto; padding: 0
 
 .editor-right .ed-section { border-bottom: 1px solid var(--border); padding: 12px 14px; }
 .editor-right .ed-section:last-child { border-bottom: none; }
+
+/* 分层记忆面板 */
+.mem-layer { margin-bottom: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--bg-elevated) 50%, transparent); }
+.mem-layer-head { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--fg); margin-bottom: 5px; }
+.mem-layer-icon { font-size: 12px; }
+.mem-layer-tag { font-size: 9px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--fg-muted); font-weight: 500; margin-left: auto; }
+.mem-layer-body { font-size: 11px; line-height: 1.6; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; }
+.mem-key-events { font-family: var(--font-mono); font-size: 10.5px; }
+.mem-recent-ch { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+.mem-recent-title { font-size: 11px; color: var(--fg); font-weight: 500; }
+.mem-recent-meta { font-size: 10px; color: var(--fg-dim); }
 .editor-right .ed-section-title { font-size: 11px; font-weight: 500; color: var(--fg-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.6px; }
 .editor-right .ed-outline-content, .editor-right .ed-comments-list, .editor-right .ed-stream {
   font-size: 12px;

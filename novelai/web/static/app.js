@@ -2086,6 +2086,47 @@ function updateEditorStats() {
  * 渲染要点面板
  * outline = { outline, summary, location, pov_character, related_characters, key_events, volume }
  */
+// =================== 分层记忆面板 ===================
+async function loadMemoryPanel(idx) {
+ const el = $("#ed-memory-content");
+ if (!el) return;
+ el.innerHTML = '<p class="placeholder" style="font-size:11px;color:var(--fg-dim)">加载记忆…</p>';
+ try {
+ const m = await API.get(`/editor/chapter/${idx}/memory`);
+ el.innerHTML = `
+ <div class="mem-layer">
+ <div class="mem-layer-head"><span class="mem-layer-icon">🌍</span> 全书摘要 <span class="mem-layer-tag">L3</span></div>
+ <div class="mem-layer-body">${ESC((m.l3_book_summary || "（暂无）")).slice(0, 300)}</div>
+ </div>
+ <div class="mem-layer">
+ <div class="mem-layer-head"><span class="mem-layer-icon">📖</span> 本卷进展 <span class="mem-layer-tag">L2</span></div>
+ <div class="mem-layer-body">${ESC((m.l2_volume_summary || "（暂无）")).slice(0, 400)}</div>
+ </div>
+ <div class="mem-layer">
+ <div class="mem-layer-head"><span class="mem-layer-icon">📝</span> 最近 ${m.recent_window} 章 <span class="mem-layer-tag">L1</span></div>
+ <div class="mem-layer-body">
+ ${(m.l1_recent_chapters || []).map(c => `
+ <div class="mem-recent-ch">
+ <span class="mem-recent-title">第${c.idx}章《${ESC(c.title)}》</span>
+ <span class="mem-recent-meta">${c.event_count} 事件</span>
+ </div>
+ `).join("") || "<p style='color:var(--fg-dim);font-size:11px'>（第一章，无前序）</p>"}
+ </div>
+ </div>
+ <div class="mem-layer">
+ <div class="mem-layer-head"><span class="mem-layer-icon">⚡</span> 关键事件 <span class="mem-layer-tag">RAG</span></div>
+ <div class="mem-layer-body mem-key-events">${ESC((m.key_events || "（暂无）")).slice(0, 500)}</div>
+ </div>
+ <div class="mem-layer">
+ <div class="mem-layer-head"><span class="mem-layer-icon">🧵</span> 活跃伏笔</div>
+ <div class="mem-layer-body">${ESC((m.relevant_threads || "（暂无）")).slice(0, 400)}</div>
+ </div>
+ `;
+ } catch (e) {
+ el.innerHTML = `<p style="color:var(--danger);font-size:11px">加载失败: ${ESC(e.message || e)}</p>`;
+ }
+}
+
 function renderOutline(outline, currentText) {
  const el = $("#ed-outline-content");
  if (!el) return;
@@ -2414,8 +2455,15 @@ async function _runReindex(idx) {
  try {
  const r = await API.post(`/editor/chapter/${idx}/reindex`, null, LLM_TIMEOUT_MS);
  setEditorStatus("● 已保存", false);
- showToast(`知识库已更新: ${r.events} 事件, ${r.threads} 伏笔${r.memory_updated ? ", 记忆已刷新" : ""}`, "success", 4000);
- addLog("done", `[reindex] 第 ${idx} 回完成: ${r.events} 事件, ${r.threads} 伏笔`);
+ const parts = [];
+ if (r.events !== undefined) parts.push(`${r.events} 事件`);
+ if (r.threads !== undefined) parts.push(`${r.threads} 伏笔`);
+ if (r.summary_updated) parts.push("摘要");
+ if (r.memory_updated) parts.push("记忆");
+ showToast(`知识库已更新: ${parts.join(" · ")}`, "success", 4000);
+ addLog("done", `[reindex] 第 ${idx} 回完成: ${parts.join(", ")}`);
+ // 如果记忆面板开着, 刷新它
+ if (document.querySelector('.ed-right-pane[data-pane="memory"].active')) loadMemoryPanel(idx);
  } catch (e) {
  setEditorStatus("● 已保存", false);
  toastError("知识库更新失败", e);
@@ -7787,6 +7835,7 @@ window.addEventListener("DOMContentLoaded", () => {
  p.classList.toggle("active", p.dataset.pane === target);
  });
  tab.classList.add("active");
+ if (target === "memory" && STATE_EDITOR.chapterIdx) loadMemoryPanel(STATE_EDITOR.chapterIdx);
  };
  });
  // v1.19.23: 字号调节 (A- / A+)

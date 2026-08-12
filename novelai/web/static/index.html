@@ -7,7 +7,7 @@
  <!-- 不依赖外网字体：纯系统字体 fallback（Inter / PingFang SC / 微软雅黑 / Songti SC / Consolas 等），
  避免 webview 启动时因 fonts.googleapis.com 阻塞而黑屏。-->
  <!-- B-新190: 加 ?v= 时间戳强破刷新, 防 PyWebView cache 旧 CSS 看不到新 hidden 修 -->
- <link rel="stylesheet" href="/static/style.css?v=4.0.6" />
+ <link rel="stylesheet" href="/static/style.css?v=4.0.7" />
  <!-- echarts 本地打包，不走 CDN（防离线/网慢时图表空白）。vis-network 已移除（死依赖，7 个可视化全用 echarts） -->
  <script src="/static/echarts.min.js"></script>
 </head>
@@ -234,6 +234,7 @@
  <aside class="editor-right">
  <div class="ed-right-tabs" role="tablist">
  <button class="ed-tab active" data-tab="outline" id="ed-tab-outline"> 要点</button>
+ <button class="ed-tab" data-tab="memory" id="ed-tab-memory"> 记忆</button>
  <button class="ed-tab" data-tab="comments" id="ed-tab-comments"> 批注 <span id="ed-comment-count" class="ed-tab-count">0</span></button>
  <button class="ed-tab" data-tab="ai" id="ed-tab-ai"> AI</button>
  </div>
@@ -242,6 +243,13 @@
  <div class="ed-section">
  <div class="ed-outline-content" id="ed-outline-content">
  <p class="placeholder" style="font-size:11px">加载中…</p>
+ </div>
+ </div>
+ </div>
+ <div class="ed-right-pane" data-pane="memory">
+ <div class="ed-section">
+ <div id="ed-memory-content">
+ <p class="placeholder" style="font-size:11px;color:var(--fg-dim)">加载中…</p>
  </div>
  </div>
  </div>
@@ -790,7 +798,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  </div>
 
- <script src="/static/app.js?v=2.1.5"></script>
+ <script src="/static/app.js?v=2.1.6"></script>
 
 <!-- ===== 工作区切换浮层（body 级，脱离顶栏裁剪） ===== -->
 <div class="ws-menu" id="ws-menu" style="display:none">

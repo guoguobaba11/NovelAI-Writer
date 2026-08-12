@@ -3451,7 +3451,19 @@ def api_load_sample() -> dict:
     """
     db = get_db()
     if kb.list_chapters(db):
-        return {"ok": False, "error": "项目已有章节，不覆盖（先到《导入》页清理数据再试）"}
+        return {"ok": False, "error": "当前工作区已有章节，不覆盖。请新建一个空工作区后再加载示例（右上角 +新建小说）。"}
+
+    try:
+        return _do_load_sample(db)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        _log("error", f"[load-sample] 异常: {tb[-500:]}")
+        return {"ok": False, "error": f"加载示例时出错: {type(e).__name__}: {str(e)[:200]}"}
+
+
+def _do_load_sample(db) -> dict:
+    """实际加载示例数据的逻辑（从 api_load_sample 拆出，便于 try/except 包裹）。"""
 
     # 1) 项目元信息
     proj = kb.get_or_create_project(db)

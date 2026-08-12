@@ -6793,8 +6793,9 @@ async function loadSampleProject() {
  // C3: API.post 已 fetch 完, r 就是 JSON. 后端 ok=true 时是 {ok:true, created:{...}, first_chapter:1}
  // 不是 HTTP Response, 不要 r.ok (HTTP 字段)
  if (!r || r.ok !== true) {
- showToast("加载失败: " + ((r && (r.error || r.message)) || "未知错误"), "error", 4000);
- addLog("error", `[sample] ${(r && r.error) || "后端返回非 ok"}`);
+ const errMsg = (r && (r.error || r.message)) || "未知错误";
+ showToast("⚠ " + errMsg, "error", 6000);
+ addLog("error", `[sample] ${errMsg}`);
  return;
  }
  addLog("done", `[sample] 示例项目已加载 (${r.created.chapters} 章 / ${r.created.characters} 角色 / ${r.created.events} 事件)`);

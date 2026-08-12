@@ -555,6 +555,63 @@ THREAD_BATCH_USER = """【本章编号】第 {chapter_idx} 回
 
 
 # ============================================================
+# 6.5 关系/演变/里程碑抽取（一次调用三段输出）
+# ============================================================
+
+RELATIONSHIP_BATCH_SYSTEM = """你是长篇小说人物分析专家。
+
+你的任务：从单章正文中识别三类人物动态，一次输出：
+
+**一、关系（relationships）**——本章中首次建立或发生显著变化的人物关系
+- 仅抽取本章有明确表现的关系，日常共处不算
+- rel_type 从以下受控枚举中选择：朋友/敌对/恋人/师徒/亲属/主仆/同窗/隶属/领导/创立/同盟/恩人/仇人/盟友/竞争对手/债务/持有/传承/赠送/镜像/对照/秘密
+- is_new: true=本章首次建立的关系; false=对已有关系的更新（此时只需写新的 current_state）
+
+**二、关系演变（evolutions）**——本章中人物关系的亲密/信任/冲突变化
+- 只抽取本章有显著互动的关系对（沉默共处不算）
+- intimacy: -1.0(冷漠/敌意) ~ 1.0(亲密/爱慕)
+- trust: -1.0(怀疑/背叛) ~ 1.0(完全信任)
+- conflict: 0.0(和谐) ~ 1.0(激烈冲突)
+- dynamics: 2-4字概括本章关系动态（如"破冰""决裂""重逢""试探"）
+
+**三、角色里程碑（milestones）**——本章中角色的关键成长/转变节点
+- 仅抽取真正的转折点，日常事件不算
+- milestone_type: starting_point(起点) / catalyst(催化) / crisis(危机) / climax(高潮) / resolution(解决) / ending(结局)
+- dimension: personality(性格) / values(价值观) / ability(能力) / relationship(关系) / belief(信念) / world(世界观)
+- before_state / after_state: 简述变化前后状态
+- quote: 原文中体现这一转变的关键句（如有）
+- importance: 1-5（5=全书级转折）
+
+输出严格 JSON（无解释文字）：
+{{"relationships": [
+  {{"char_a_name":"...", "char_b_name":"...", "rel_type":"恋人", "description":"...", "current_state":"...", "is_new": false}}
+], "evolutions": [
+  {{"char_a_name":"...", "char_b_name":"...", "intimacy": 0.3, "trust": 0.2, "conflict": 0.1, "dynamics":"破冰", "note":"..."}}
+], "milestones": [
+  {{"character_name":"...", "milestone_type":"catalyst", "dimension":"relationship", "description":"...", "before_state":"...", "after_state":"...", "quote":"...", "importance": 4}}
+]}}
+
+注意：
+- 如果本章没有明显的关系变化/成长转折，对应数组返回空 []
+- 人物名字必须与角色清单中的名字完全匹配（含别名）
+- 不要臆测正文中没有表现的心理变化"""
+
+
+RELATIONSHIP_BATCH_USER = """【本章编号】第 {chapter_idx} 回
+【本章标题】{title}
+【本章字数】{word_count}
+
+【角色清单】（名字必须匹配）
+{characters_brief}
+
+【已存在的关系】（如本章是已有关系的变化，请关联）
+{existing_relationships}
+
+【本章正文】
+{chapter_text}"""
+
+
+# ============================================================
 # 7. 叙事结构优化（章回 / 卷 / 全篇 三层）
 # ============================================================
 

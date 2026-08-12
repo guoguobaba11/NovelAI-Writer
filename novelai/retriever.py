@@ -207,6 +207,31 @@ def build_chapter_context(
             mentioned_char_ids.add(c["id"])
 
     # 关系：与 POV 角色有关的所有关系；无 POV 时显示所有提到人物间的关系
+    # 预加载所有关系演变，按 relationship_id 取最新一条（避免逐条查 DB）
+    all_evos = kb.list_rel_evolution(db)
+    latest_evo_by_rel: dict[int, dict] = {}
+    for ev in all_evos:
+        rid = ev.get("relationship_id")
+        if rid is not None:
+            latest_evo_by_rel[rid] = ev  # list_rel_evolution 已按 id 排序，后面覆盖前面
+
+    def _evo_suffix(rel_id: int) -> str:
+        """格式化最新演变数值后缀"""
+        ev = latest_evo_by_rel.get(rel_id)
+        if not ev:
+            return ""
+        parts = []
+        if ev.get("intimacy") is not None:
+            parts.append(f"亲密度:{ev['intimacy']:.1f}")
+        if ev.get("trust") is not None:
+            parts.append(f"信任:{ev['trust']:.1f}")
+        if ev.get("conflict") is not None:
+            parts.append(f"冲突:{ev['conflict']:.1f}")
+        dyn = ev.get("dynamics", "")
+        if dyn:
+            parts.append(dyn)
+        return f" [{' '.join(parts)}]" if parts else ""
+
     rels_text_parts = []
     all_rels = kb.list_relationships(db)
     if pov:
@@ -216,7 +241,7 @@ def build_chapter_context(
                 other = kb.get_character(db, other_id)
                 if other:
                     rels_text_parts.append(
-                        f"- {pov['name']} ↔ {other['name']}：{r['rel_type']}（{r.get('current_state','')}）"
+                        f"- {pov['name']} ↔ {other['name']}：{r['rel_type']}（{r.get('current_state','')}）{_evo_suffix(r['id'])}"
                     )
     else:
         # 无 POV：显示所有提到人物之间的关系
@@ -226,7 +251,7 @@ def build_chapter_context(
                 a_name = char_id_to_name.get(r["char_a_id"], "?")
                 b_name = char_id_to_name.get(r["char_b_id"], "?")
                 rels_text_parts.append(
-                    f"- {a_name} ↔ {b_name}：{r['rel_type']}（{r.get('current_state','')}）"
+                    f"- {a_name} ↔ {b_name}：{r['rel_type']}（{r.get('current_state','')}）{_evo_suffix(r['id'])}"
                 )
     rels_text = "\n".join(rels_text_parts) if rels_text_parts else "（无）"
 

@@ -511,8 +511,172 @@ def extract_threads_for_chapter(db: Database, ai: AIClient, chapter_idx: int) ->
     return {"ok": True, "added": added, "linked": linked, "threads": out}
 
 
+def extract_relationships_for_chapter(db: Database, ai: AIClient, chapter_idx: int) -> dict:
+    """抽取单章正文 → 人物关系 + 关系演变 + 角色里程碑，一次 AI 调用完成。
+
+    输出三段 JSON 分别入库：
+    - relationships: 按 (char_a, char_b) 双向去重，新关系 add_relationship
+    - evolutions: 映射名字→id，关系不存在则先建，再 add_rel_evolution
+    - milestones: 映射名字→id，add_milestone（自动推进 arc_progress）
+    """
+    chapter = kb.get_chapter_by_idx(db, chapter_idx)
+    if not chapter:
+        return {"ok": False, "error": f"第 {chapter_idx} 章不存在"}
+    text = (chapter.get("final_text") or chapter.get("draft") or "").strip()
+    if not text:
+        return {"ok": False, "error": f"第 {chapter_idx} 章无正文"}
+    ch_id = chapter["id"]
+
+    # 角色清单（名字→id 映射 + 简要档案供 AI 匹配）
+    name_to_id = kb.build_name_to_id_map(db, include_aliases=True)
+    all_chars = kb.list_characters(db)
+    char_brief_lines = []
+    for c in all_chars:
+        aliases = c.get("aliases") or []
+        alias_hint = f"（别名：{'/'.join(aliases)}）" if aliases else ""
+        char_brief_lines.append(f"- {c['name']}（{c.get('role', '')}）{alias_hint}：{(c.get('basic_info') or '')[:50]}")
+    characters_brief = "\n".join(char_brief_lines) if char_brief_lines else "（暂无角色）"
+
+    # 已有关系清单（供 AI 判断是新建还是更新）
+    existing_rels = kb.list_relationships(db)
+    id_to_name = {c["id"]: c["name"] for c in all_chars}
+    rel_lines = []
+    for r in existing_rels:
+        a_name = id_to_name.get(r["char_a_id"], "?")
+        b_name = id_to_name.get(r["char_b_id"], "?")
+        rel_lines.append(f"  - #{r['id']} {a_name} ↔ {b_name}：{r['rel_type']}（{r.get('current_state', '')}）")
+    existing_relationships_str = "\n".join(rel_lines) if rel_lines else "（暂无）"
+
+    messages = [
+        {"role": "system", "content": prompts.RELATIONSHIP_BATCH_SYSTEM},
+        {"role": "user", "content": _format_user(prompts.RELATIONSHIP_BATCH_USER,
+            chapter_idx=chapter["idx"],
+            title=chapter.get("title", ""),
+            word_count=len(text),
+            characters_brief=characters_brief,
+            existing_relationships=existing_relationships_str,
+            chapter_text=text,
+        )},
+    ]
+    try:
+        data = ai.chat_json(messages, temperature=0.2)
+    except AICallError as e:
+        return {"ok": False, "error": f"LLM 调用失败: {e}"}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "LLM 返回格式异常", "raw": str(data)[:300]}
+
+    rels_added = 0
+    evos_added = 0
+    miles_added = 0
+
+    # 构建已有关系查找索引：(char_a_id, char_b_id) 和 (char_b_id, char_a_id) 双向
+    rel_pair_index: dict[tuple[int, int], dict] = {}
+    for r in existing_rels:
+        rel_pair_index[(r["char_a_id"], r["char_b_id"])] = r
+        rel_pair_index[(r["char_b_id"], r["char_a_id"])] = r
+
+    def _resolve_pair(name_a: str, name_b: str) -> tuple[int | None, int | None]:
+        """名字→id，未登记返回 None"""
+        return name_to_id.get(name_a.strip()), name_to_id.get(name_b.strip())
+
+    # --- 一、关系入库 ---
+    for rel in (data.get("relationships") or []):
+        if not isinstance(rel, dict):
+            continue
+        a_id, b_id = _resolve_pair(rel.get("char_a_name", ""), rel.get("char_b_name", ""))
+        if not a_id or not b_id:
+            continue  # 未登记角色，跳过（不像 events 那样自动建卡，关系需两端都有档案）
+        rel_type = (rel.get("rel_type") or "秘密").strip()
+        # 双向去重：已存在则只更新 current_state
+        existing_r = rel_pair_index.get((a_id, b_id))
+        if existing_r:
+            new_state = (rel.get("current_state") or "").strip()
+            if new_state and new_state != existing_r.get("current_state"):
+                db.execute(
+                    "UPDATE relationship SET current_state=? WHERE id=?",
+                    (new_state, existing_r["id"]),
+                )
+            continue
+        # 新关系
+        try:
+            new_id = kb.add_relationship(db, a_id, b_id, rel_type,
+                description=rel.get("description", ""),
+                current_state=rel.get("current_state", ""),
+                established_chapter_id=ch_id)
+            rels_added += 1
+            # 更新索引（存入 id，让后续 evolutions 循环能找到而不重复建）
+            new_r = {"id": new_id, "char_a_id": a_id, "char_b_id": b_id, "rel_type": rel_type}
+            rel_pair_index[(a_id, b_id)] = new_r
+            rel_pair_index[(b_id, a_id)] = new_r
+        except Exception:
+            continue
+
+    # --- 二、关系演变入库 ---
+    for evo in (data.get("evolutions") or []):
+        if not isinstance(evo, dict):
+            continue
+        a_id, b_id = _resolve_pair(evo.get("char_a_name", ""), evo.get("char_b_name", ""))
+        if not a_id or not b_id:
+            continue
+        # 找到关系 id，不存在则建一个 "秘密" 占位
+        existing_r = rel_pair_index.get((a_id, b_id))
+        if existing_r and "id" in existing_r:
+            rel_id = existing_r["id"]
+        else:
+            try:
+                rel_id = kb.add_relationship(db, a_id, b_id, "秘密",
+                    established_chapter_id=ch_id)
+                new_r = {"id": rel_id, "char_a_id": a_id, "char_b_id": b_id, "rel_type": "秘密"}
+                rel_pair_index[(a_id, b_id)] = new_r
+                rel_pair_index[(b_id, a_id)] = new_r
+            except Exception:
+                continue
+        # 解析数值（AI 可能返回字符串）
+        def _f(v, lo, hi, default=0.0):
+            try:
+                v = float(v)
+                return max(lo, min(hi, v))
+            except (TypeError, ValueError):
+                return default
+        try:
+            kb.add_rel_evolution(db, rel_id, ch_id,
+                intimacy=_f(evo.get("intimacy"), -1.0, 1.0),
+                trust=_f(evo.get("trust"), -1.0, 1.0),
+                conflict=_f(evo.get("conflict"), 0.0, 1.0),
+                dynamics=evo.get("dynamics", ""),
+                note=evo.get("note", ""))
+            evos_added += 1
+        except Exception:
+            continue
+
+    # --- 三、角色里程碑入库 ---
+    for ms in (data.get("milestones") or []):
+        if not isinstance(ms, dict):
+            continue
+        c_id = name_to_id.get((ms.get("character_name") or "").strip())
+        if not c_id:
+            continue
+        ms_type = ms.get("milestone_type", "catalyst").strip()
+        if ms_type not in ("starting_point", "catalyst", "crisis", "climax", "resolution", "ending"):
+            ms_type = "catalyst"
+        try:
+            kb.add_milestone(db, c_id, ch_id,
+                milestone_type=ms_type,
+                description=ms.get("description", ""),
+                dimension=ms.get("dimension", "personality"),
+                before_state=ms.get("before_state", ""),
+                after_state=ms.get("after_state", ""),
+                quote=ms.get("quote", ""),
+                importance=int(ms.get("importance") or 3))
+            miles_added += 1
+        except Exception:
+            continue
+
+    return {"ok": True, "relationships": rels_added, "evolutions": evos_added, "milestones": miles_added}
+
+
 def extract_all(db: Database, ai: AIClient, only_chapters: list[int] | None = None) -> dict:
-    """逐章跑 events + threads 抽取。返回汇总报告。"""
+    """逐章跑 events + threads + relationships 抽取。返回汇总报告。"""
     chapters = kb.list_chapters(db)
     if only_chapters:
         chapters = [c for c in chapters if c["idx"] in only_chapters]
@@ -521,6 +685,7 @@ def extract_all(db: Database, ai: AIClient, only_chapters: list[int] | None = No
         "total_chapters": len(chapters),
         "events": {"ok": 0, "failed": 0, "added": 0, "skipped": 0, "details": []},
         "threads": {"ok": 0, "failed": 0, "added": 0, "linked": 0, "details": []},
+        "characters": {"ok": 0, "failed": 0, "relationships": 0, "evolutions": 0, "milestones": 0, "details": []},
     }
     for c in chapters:
         # 事件
@@ -551,6 +716,23 @@ def extract_all(db: Database, ai: AIClient, only_chapters: list[int] | None = No
             "added": th_r.get("added", 0) if th_r.get("ok") else 0,
             "linked": th_r.get("linked", 0) if th_r.get("ok") else 0,
             "error": th_r.get("error"),
+        })
+        # 人物关系 + 演变 + 里程碑
+        dyn_r = extract_relationships_for_chapter(db, ai, c["idx"])
+        if dyn_r.get("ok"):
+            report["characters"]["ok"] += 1
+            report["characters"]["relationships"] += dyn_r.get("relationships", 0)
+            report["characters"]["evolutions"] += dyn_r.get("evolutions", 0)
+            report["characters"]["milestones"] += dyn_r.get("milestones", 0)
+        else:
+            report["characters"]["failed"] += 1
+        report["characters"]["details"].append({
+            "chapter_idx": c["idx"],
+            "title": c["title"],
+            "relationships": dyn_r.get("relationships", 0) if dyn_r.get("ok") else 0,
+            "evolutions": dyn_r.get("evolutions", 0) if dyn_r.get("ok") else 0,
+            "milestones": dyn_r.get("milestones", 0) if dyn_r.get("ok") else 0,
+            "error": dyn_r.get("error"),
         })
     return report
 
@@ -741,6 +923,20 @@ def write_chapter_pipeline(
                 on_phase("threads", f"新增伏笔 {added} 条，关联 {linked} 条")
     except Exception:
         pass  # 伏笔抽取失败不影响写章主流程
+
+    # 人物关系 + 演变 + 里程碑抽取（一次 AI 调用）
+    if on_phase: on_phase("characters", "抽取人物动态…")
+    try:
+        dyn_result = extract_relationships_for_chapter(db, ai, chapter_idx)
+        if on_phase and dyn_result.get("ok"):
+            parts = []
+            if dyn_result.get("relationships"): parts.append(f"关系{dyn_result['relationships']}")
+            if dyn_result.get("evolutions"): parts.append(f"演变{dyn_result['evolutions']}")
+            if dyn_result.get("milestones"): parts.append(f"里程碑{dyn_result['milestones']}")
+            if parts:
+                on_phase("characters", "新增 " + "，".join(parts))
+    except Exception:
+        pass  # 关系抽取失败不影响写章主流程
 
     # 一致性
     if on_phase: on_phase("consistency", "一致性检查…")
@@ -1016,8 +1212,6 @@ def _agentic_research(db, ai, chapter_idx, ctx, on_phase=None):
     """
     if not CONFIG.writer.writer_agentic_research:
         return ""
-    if CONFIG.ai.provider == "anthropic":
-        return ""  # anthropic 不支持 function-calling，降级
     from . import tools as tools_mod
 
     if on_phase:
@@ -1077,23 +1271,24 @@ def _agentic_reflect(db, ai, chapter_idx, text, report, on_phase=None):
     """
     if not CONFIG.writer.writer_agentic_reflect:
         return text, False
-    # 如果 consistency 检查跳过了(skipped) 或没有 high 问题，不反思
+    # 如果 consistency 检查跳过了(skipped) 或没有 high/medium 问题，不反思
+    # reflect 扩到 medium：auto-fix 只重写 high（成本高），reflect 审查 high+medium（成本低）
     issues = report.get("issues") or []
-    high_issues = [i for i in issues if i.get("severity") == "high"]
-    if report.get("skipped") or not high_issues:
+    review_issues = [i for i in issues if i.get("severity") in ("high", "medium")]
+    if report.get("skipped") or not review_issues:
         return text, False  # 没问题或没检查，不反思
 
     if on_phase:
         on_phase("reflect", "AI 正在自审…")
 
-    # 把 high 问题和正文喂给 AI，让它判断是否需要修正
+    # 把 high/medium 问题和正文喂给 AI，让它判断是否需要修正
     issue_lines = []
-    for i, iss in enumerate(high_issues[:5], 1):
+    for i, iss in enumerate(review_issues[:8], 1):
         issue_lines.append(
-            f"{i}. [{iss.get('category','?')}] {iss.get('explanation','')}"
+            f"{i}. [{iss.get('severity','?')}/{iss.get('category','?')}] {iss.get('explanation','')}"
         )
     reflect_prompt = (
-        f"你刚写完了第 {chapter_idx} 章的正文。一致性检查发现以下 HIGH 问题：\n\n"
+        f"你刚写完了第 {chapter_idx} 章的正文。一致性检查发现以下问题：\n\n"
         + "\n".join(issue_lines) + "\n\n"
         f"请审查你的正文，判断这些问题是否确实存在。如果确实需要修正，"
         f"请输出修正后的完整正文（只改有问题的段落，保留其他内容不变）。"

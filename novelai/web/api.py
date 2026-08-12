@@ -1680,6 +1680,15 @@ def api_editor_reindex(idx: int = ApiPath(ge=1, description="章节号, ≥1")) 
     except Exception as e:
         log_exception("reindex-threads", e)
 
+    # 3.5 重抽人物关系 + 演变 + 里程碑
+    try:
+        dyn_result = writer.extract_relationships_for_chapter(db, ai, idx)
+        results["relationships"] = dyn_result.get("relationships", 0)
+        results["evolutions"] = dyn_result.get("evolutions", 0)
+        results["milestones"] = dyn_result.get("milestones", 0)
+    except Exception as e:
+        log_exception("reindex-characters", e)
+
     # 4. 更新分层记忆
     try:
         writer._update_layered_memory(db, ai, idx, ch_id, summary)

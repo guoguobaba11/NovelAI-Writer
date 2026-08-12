@@ -128,6 +128,7 @@ def generate_chapter(
     max_retries: int = 2,
     on_chunk=None,
     on_phase=None,
+    research_supplement: str = "",
 ) -> str:
     """生成单章正文（不含一致性检查）。返回正文。
 
@@ -146,9 +147,12 @@ def generate_chapter(
     # 第一段生成
     text = ""
     for attempt in range(max_retries + 1):
+        user_content = _format_user(prompts.CHAPTER_USER_TEMPLATE, **ctx)
+        if research_supplement:
+            user_content += research_supplement  # agentic 查询补充信息
         messages = [
             {"role": "system", "content": prompts.CHAPTER_SYSTEM.format(target_words=target_words)},
-            {"role": "user", "content": _format_user(prompts.CHAPTER_USER_TEMPLATE, **ctx)},
+            {"role": "user", "content": user_content},
         ]
         if attempt > 0:
             messages.append({
@@ -652,8 +656,17 @@ def write_chapter_pipeline(
     6. 写终稿、报告
     """
     auto_fix_retries = auto_fix_retries if auto_fix_retries is not None else CONFIG.writer.max_consistency_retries
+
+    # Agentic 阶段 0：写前自主查询知识库（Hermes 风格）
+    _research_supplement = ""
+    try:
+        ctx_preview = retriever.build_chapter_context(db, chapter_idx, recent_window=CONFIG.writer.recent_chapter_window)
+        _research_supplement = _agentic_research(db, ai, chapter_idx, ctx_preview, on_phase=on_phase)
+    except Exception:
+        pass  # research 失败不影响写章
+
     if on_phase: on_phase("generate", "AI 正在写正文…")
-    text = generate_chapter(db, ai, chapter_idx, target_words=target_words, on_chunk=on_chunk, on_phase=on_phase)
+    text = generate_chapter(db, ai, chapter_idx, target_words=target_words, on_chunk=on_chunk, on_phase=on_phase, research_supplement=_research_supplement)
     # 先把正文落库（保险）：即使后续摘要/事件/一致性步骤崩溃，正文也不丢
     _ch0 = kb.get_chapter_by_idx(db, chapter_idx)
     if _ch0:
@@ -806,6 +819,15 @@ def write_chapter_pipeline(
                     (Database.to_json(mapped), seq_to_id[i]),
                 )
 
+    # Agentic 阶段 10：写后自反思审查（Hermes 风格）
+    try:
+        text, was_revised = _agentic_reflect(db, ai, chapter_idx, text, report, on_phase=on_phase)
+        if was_revised:
+            # 反思修正了正文，重新更新字数
+            kb.update_chapter(db, ch_id, draft=text, final_text=text, word_count=len(text))
+    except Exception:
+        pass  # 反思失败不影响写章结果
+
     # 写终稿（H4：同时写入 unfinished_action 供下一章承接）
     unfinished = (report.get("unfinished_action_at_end") or "").strip() if isinstance(report, dict) else ""
     kb.update_chapter(
@@ -949,3 +971,119 @@ def _compress_summary(ai: AIClient, text: str, max_chars: int = 600, desc: str =
     ]
     result = ai.chat(messages, temperature=0.3, model=CONFIG.ai.mini_model).strip()
     return result[:max_chars] if result else text[:max_chars]
+
+
+# ============================================================
+# Agentic Loop：写前自主查询 + 写后自反思（Hermes 风格）
+# ============================================================
+
+def _agentic_research(db, ai, chapter_idx, ctx, on_phase=None):
+    """阶段 0：AI 写章前自主查询知识库。
+
+    AI 看到大纲和上下文后，自主决定需要查哪些角色/伏笔/关系，
+    查到的信息追加到 ctx 供写章 prompt 使用。
+    provider 不支持 tools 时降级跳过（不影响现有流程）。
+    返回追加到 ctx 的补充信息字符串（拼入 user prompt）。
+    """
+    if not CONFIG.writer.writer_agentic_research:
+        return ""
+    if CONFIG.ai.provider == "anthropic":
+        return ""  # anthropic 不支持 function-calling，降级
+    from . import tools as tools_mod
+
+    if on_phase:
+        on_phase("research", "AI 正在查询知识库…")
+
+    # 构造规划 prompt：让 AI 看到大纲，决定查什么
+    outline = ctx.get("outline", "")
+    pov = ctx.get("pov_profile", "")[:200]
+    research_prompt = (
+        f"你即将写第 {chapter_idx} 章。以下是本章大纲和 POV 角色：\n\n"
+        f"【大纲】{outline[:500]}\n\n"
+        f"【POV 角色】{pov}\n\n"
+        f"你可以调用工具查询知识库中的角色档案、伏笔状态、人物关系等，"
+        f"帮你更好地理解前情和人物设定。如果已有信息足够，也可以不调工具。"
+    )
+    messages = [
+        {"role": "system", "content": "你是小说写作助手。在动笔前，主动查询你需要的信息。"},
+        {"role": "user", "content": research_prompt},
+    ]
+
+    # 工具调用循环（≤3 轮）
+    research_findings = []
+    max_rounds = CONFIG.writer.editor_max_tool_rounds
+    for round_n in range(max_rounds):
+        try:
+            result = ai.chat_with_tools(
+                messages, tools_mod.TOOL_DEFINITIONS,
+                temperature=0.2, max_tokens=500,
+            )
+        except Exception:
+            break  # 工具调用失败，降级跳过
+        tool_calls = result.get("tool_calls") or []
+        if not tool_calls:
+            break  # AI 决定不需要再查
+        messages.append(tools_mod.build_assistant_tool_message(tool_calls))
+        for tc in tool_calls:
+            tool_result = tools_mod.execute_tool(db, tc["name"], tc.get("arguments", {}))
+            messages.append(tools_mod.build_tool_result_message(tc, tool_result))
+            research_findings.append(f"[{tc['name']}] {tool_result[:200]}")
+            if on_phase:
+                on_phase("research", f"🔍 查询: {tc['name']}")
+
+    if research_findings:
+        findings_text = "\n\n【AI 自主查询补充信息】\n" + "\n".join(research_findings[:6])
+        if on_phase:
+            on_phase("research", f"查询完成（{len(research_findings)} 条）")
+        return findings_text
+    return ""
+
+
+def _agentic_reflect(db, ai, chapter_idx, text, report, on_phase=None):
+    """阶段 10：AI 写章后自反思审查。
+
+    AI 审查自己的正文 + consistency 报告，自主决定是否需要修正。
+    若 auto-fix 已修复所有 high 问题，则跳过。
+    返回（修正后的正文, 是否修正了）。
+    """
+    if not CONFIG.writer.writer_agentic_reflect:
+        return text, False
+    # 如果 consistency 检查跳过了(skipped) 或没有 high 问题，不反思
+    issues = report.get("issues") or []
+    high_issues = [i for i in issues if i.get("severity") == "high"]
+    if report.get("skipped") or not high_issues:
+        return text, False  # 没问题或没检查，不反思
+
+    if on_phase:
+        on_phase("reflect", "AI 正在自审…")
+
+    # 把 high 问题和正文喂给 AI，让它判断是否需要修正
+    issue_lines = []
+    for i, iss in enumerate(high_issues[:5], 1):
+        issue_lines.append(
+            f"{i}. [{iss.get('category','?')}] {iss.get('explanation','')}"
+        )
+    reflect_prompt = (
+        f"你刚写完了第 {chapter_idx} 章的正文。一致性检查发现以下 HIGH 问题：\n\n"
+        + "\n".join(issue_lines) + "\n\n"
+        f"请审查你的正文，判断这些问题是否确实存在。如果确实需要修正，"
+        f"请输出修正后的完整正文（只改有问题的段落，保留其他内容不变）。"
+        f"如果这些问题是误报或已不存在，直接回复原正文。\n\n"
+        f"【正文（末尾 2000 字）】\n{text[-2000:]}"
+    )
+    messages = [
+        {"role": "system", "content": "你是小说编辑。请客观审查自己的作品，诚实地判断问题是否存在。"},
+        {"role": "user", "content": reflect_prompt},
+    ]
+    try:
+        revised = ai.chat(messages, temperature=0.4, model=CONFIG.ai.mini_model).strip()
+        # 只有实质不同才采纳（防 AI 原样返回）
+        if revised and revised != text and len(revised) > len(text) * 0.5:
+            if on_phase:
+                on_phase("reflect", "自审修正完成")
+            return revised, True
+    except Exception:
+        pass  # 反思失败不影响结果
+    if on_phase:
+        on_phase("reflect", "自审完成（无需修正）")
+    return text, False

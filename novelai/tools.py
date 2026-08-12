@@ -72,6 +72,21 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    # 写章 agentic 专用：AI 自审一致性
+    {
+        "type": "function",
+        "function": {
+            "name": "check_self_consistency",
+            "description": "对本章正文做快速一致性检查（信息泄漏/时间线/性格漂移）。写完正文后自审时调用，返回发现的问题清单。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapter_idx": {"type": "integer", "description": "章节号"},
+                },
+                "required": ["chapter_idx"],
+            },
+        },
+    },
 ]
 
 
@@ -159,6 +174,23 @@ def execute_tool(db: Database, tool_name: str, arguments: dict) -> str:
                    (r["char_a_id"] == char_b["id"] and r["char_b_id"] == char_a["id"]):
                     return f"{ca} ↔ {cb}：{r.get('rel_type', '?')}（{r.get('current_state', '未明确')}）"
             return f"{ca} 与 {cb} 之间暂无明确关系记录。"
+
+        if tool_name == "check_self_consistency":
+            from . import consistency as cons_mod
+            chapter_idx = arguments.get("chapter_idx", 1)
+            chapter = kb.get_chapter_by_idx(db, chapter_idx)
+            if not chapter:
+                return "章节不存在"
+            text = chapter.get("final_text") or chapter.get("draft") or ""
+            if not text.strip():
+                return "本章无正文"
+            issues = cons_mod.hard_check(db, chapter_idx, text)
+            if not issues:
+                return "一致性检查通过，未发现硬性问题。"
+            lines = [f"发现 {len(issues)} 个问题："]
+            for i, iss in enumerate(issues[:8], 1):
+                lines.append(f"{i}. [{iss.get('severity','?')}] {iss.get('category','?')}: {iss.get('explanation','')[:80]}")
+            return "\n".join(lines)
 
         return f"未知工具: {tool_name}"
     except Exception as e:

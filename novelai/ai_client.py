@@ -313,7 +313,7 @@ class AIClient:
             "messages": messages,
             "temperature": self.cfg.temperature if temperature is None else temperature,
             "max_tokens": self.cfg.max_tokens if max_tokens is None else max_tokens,
-            "timeout": self.cfg.timeout,
+            "timeout": max(self.cfg.timeout, 300),  # 至少 5 分钟（agentic loop 查询需要）
             "tools": tools,
             "tool_choice": "auto",
         }

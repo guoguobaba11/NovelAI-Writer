@@ -125,6 +125,9 @@ class WriterConfig:
     editor_tool_use: bool = True
     # 编辑器 AI 改稿：工具调用最大轮数（防死循环）
     editor_max_tool_rounds: int = 3
+    # Agentic Loop 写章：写前自主查询 + 写后自反思（Hermes 风格半自主决策）
+    writer_agentic_research: bool = True   # 写章前 AI 自主调工具查知识库
+    writer_agentic_reflect: bool = True    # 写章后 AI 自审+修正
 
 
 @dataclass

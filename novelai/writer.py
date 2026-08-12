@@ -108,6 +108,142 @@ def generate_outline(
     return data
 
 
+def _save_outline_chapters(db: Database, chapters: list, chars: list) -> None:
+    """把 AI 返回的章节大纲写入 chapter 表（generate_outline 和 batched 共用）。"""
+    char_name_to_id = {c["name"]: c["id"] for c in chars}
+    for ch in chapters:
+        if not isinstance(ch, dict):
+            continue
+        idx = ch.get("idx")
+        if not isinstance(idx, int) or idx < 1:
+            continue
+        pov_name = ch.get("pov_character") or ""
+        pov_id = char_name_to_id.get(pov_name)
+        # outline 拼接：摘要 + 承接 + 钩子 + 关键事件(beats) + 伏笔(threads_touched)
+        outline_parts = [ch.get("summary", "")]
+        if ch.get("causal_link"):
+            outline_parts.append(f"\n\n【承接】{ch['causal_link']}")
+        if ch.get("hook"):
+            outline_parts.append(f"\n\n【钩子】{ch['hook']}")
+        beats = ch.get("beats") or []
+        if beats:
+            outline_parts.append("\n\n【关键事件（本章必须覆盖）】\n" + "\n".join(f"- {b}" for b in beats))
+        tt = ch.get("threads_touched") or []
+        if tt:
+            outline_parts.append("\n\n【本章应推进的伏笔/线索】\n" + "、".join(tt))
+        outline_text = "".join(outline_parts)
+        existing = kb.get_chapter_by_idx(db, idx)
+        if existing:
+            kb.update_chapter(
+                db, existing["id"],
+                title=ch.get("title", existing["title"]),
+                outline=outline_text,
+                story_time_start=ch.get("story_time"),
+                story_time_end=ch.get("story_time"),
+                location=ch.get("location", existing.get("location","")),
+                pov_character_id=pov_id if pov_id else existing.get("pov_character_id") or None,
+            )
+        else:
+            kb.add_chapter(
+                db, idx=idx,
+                title=ch.get("title", f"第{idx}章"),
+                outline=outline_text,
+                story_time_start=ch.get("story_time"),
+                story_time_end=ch.get("story_time"),
+                location=ch.get("location", ""),
+                pov_character_id=pov_id,
+            )
+
+
+def generate_outline_batched(
+    db: Database,
+    ai: AIClient,
+    target_chapters: int = 30,
+    on_phase=None,
+) -> dict:
+    """分批生成大纲，避免单次 AI 输出超 token 导致 JSON 截断。
+    每批 BATCH_SIZE 章，通过 on_phase 回调推送进度。
+    ≤20 章时走单次生成（兼容原逻辑）。
+    """
+    BATCH_SIZE = 20
+    if target_chapters <= BATCH_SIZE:
+        if on_phase:
+            on_phase("progress", {"done": 0, "total": 1, "msg": "AI 正在生成大纲…"})
+        data = generate_outline(db, ai, target_chapters=target_chapters)
+        if on_phase:
+            on_phase("progress", {"done": 1, "total": 1, "msg": f"完成，{len(data.get('chapters',[]))} 章"})
+        return data
+
+    project = kb.get_or_create_project(db)
+    chars = kb.list_characters(db)
+    chars_brief = "\n".join(
+        f"- {c['name']}（{c.get('role','')}）：{c.get('basic_info','')}"
+        for c in chars
+    ) or "（尚未定义人物）"
+    threads = kb.list_threads(db)
+    beats = "\n".join(
+        f"- [{t.get('thread_type','')}] {t['title']}：{t.get('description','')}"
+        for t in threads
+    ) or "（尚未定义关键事件/伏笔）"
+
+    # 规划分批
+    batches = []
+    for start in range(1, target_chapters + 1, BATCH_SIZE):
+        end = min(start + BATCH_SIZE - 1, target_chapters)
+        batches.append((start, end))
+
+    all_chapters = []
+    structural_notes = ""
+    for i, (start, end) in enumerate(batches):
+        if on_phase:
+            on_phase("progress", {
+                "done": i, "total": len(batches),
+                "msg": f"正在生成第 {start}-{end} 章（批次 {i+1}/{len(batches)}）…",
+            })
+        # 已生成章节摘要（最近 8 章作为衔接上下文，避免 prompt 过长）
+        prev_summary = "（首批，无前文）"
+        if all_chapters:
+            recent = all_chapters[-8:]
+            prev_summary = "\n".join(
+                f"第{ch.get('idx','?')}章《{ch.get('title','')}》:{(ch.get('summary','') or '')[:100]}"
+                for ch in recent
+            )
+        messages = [
+            {"role": "system", "content": prompts.OUTLINE_SYSTEM},
+            {"role": "user", "content": _format_user(prompts.OUTLINE_BATCH_USER_TEMPLATE,
+                synopsis=project.get("synopsis") or "（未填写）",
+                style=project.get("style") or "（未指定）",
+                pov_mode=project.get("pov_mode") or "限知视角",
+                time_unit=project.get("story_time_unit") or "回",
+                target_chapters=target_chapters,
+                characters_brief=chars_brief,
+                key_beats=beats,
+                prev_summary=prev_summary,
+                start=start,
+                end=end,
+                batch_count=end - start + 1,
+            )},
+        ]
+        try:
+            data = ai.chat_json(messages, temperature=0.7)
+        except Exception as e:
+            if on_phase:
+                on_phase("error", f"第 {start}-{end} 章生成失败: {e}")
+            break
+        batch_chapters = data.get("chapters", []) if isinstance(data, dict) else []
+        if batch_chapters:
+            _save_outline_chapters(db, batch_chapters, chars)
+            all_chapters.extend(batch_chapters)
+        if isinstance(data, dict) and data.get("structural_notes") and not structural_notes:
+            structural_notes = data["structural_notes"]
+
+    if on_phase:
+        on_phase("progress", {"done": len(batches), "total": len(batches),
+                              "msg": f"完成，共 {len(all_chapters)} 章"})
+    return {"chapters": all_chapters, "structural_notes": structural_notes,
+            "count": len(all_chapters)}
+
+
 # ============================================================
 # 2. 章节正文生成
 # ============================================================

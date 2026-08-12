@@ -1013,20 +1013,79 @@ function renderNewNovel() {
  const target = parseInt($("#nn-target-chapters").value) || 20;
  const hasExisting = !!_nnOutlineData || document.querySelector("#nn-outline-result .nn-card") || document.querySelector("#nn-has-outline");
  if (hasExisting && !(await showConfirm(`将重新生成整本大纲（${target} 章），覆盖当前大纲。确定继续？`, "! 重新生成"))) return;
+ const btn = $("#nn-gen-outline");
+ const statusEl = $("#nn-outline-status");
+ btn.disabled = true;
+ const t0 = Date.now();
+ // 进度条 DOM
+ let barEl = $("#nn-outline-progress");
+ if (!barEl) {
+ barEl = document.createElement("div");
+ barEl.id = "nn-outline-progress";
+ barEl.style.cssText = "margin-top:8px";
+ btn.parentElement.appendChild(barEl);
+ }
+ const renderProgress = (done, total, msg) => {
+ const pct = total > 0 ? Math.round(done / total * 100) : 0;
+ const elapsed = Math.round((Date.now() - t0) / 1000);
+ barEl.innerHTML = `
+ <div style="background:var(--bg-card);border-radius:6px;height:8px;overflow:hidden;border:1px solid var(--border)">
+ <div style="width:${pct}%;height:100%;background:var(--accent);transition:width .4s"></div>
+ </div>
+ <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--fg-muted)">
+ <span>${ESC(msg || "准备中…")}</span>
+ <span>${done}/${total} · ${elapsed}s</span>
+ </div>`;
+ };
  try {
- $("#nn-outline-status").textContent = "AI 生成中（可能需 30-60 秒）…";
- $("#nn-gen-outline").disabled = true;
- const result = await API.post("/outline/generate", {target_chapters: target}, LLM_TIMEOUT_MS);
+ statusEl.textContent = target > 20 ? `分批生成中（${target} 章，每批 20 章）…` : "AI 生成中…";
+ renderProgress(0, 1, "准备中…");
+ const resp = await fetch("/api/outline/generate-stream", {
+ method: "POST",
+ headers: {"Content-Type": "application/json"},
+ body: JSON.stringify({target_chapters: target}),
+ });
+ const reader = resp.body.getReader();
+ const decoder = new TextDecoder();
+ let buffer = "";
+ let result = null;
+ while (true) {
+ const {done, value} = await reader.read();
+ if (done) break;
+ buffer += decoder.decode(value, {stream: true});
+ const lines = buffer.split("\n");
+ buffer = lines.pop() || "";
+ for (const line of lines) {
+ if (!line.startsWith("data:")) continue;
+ const dataStr = line.slice(5).trim();
+ if (!dataStr) continue;
+ try {
+ const evt = JSON.parse(dataStr);
+ if (evt.phase && evt.phase.phase === "progress") {
+ const p = evt.phase;
+ renderProgress(p.done || 0, p.total || 1, p.msg || "");
+ statusEl.textContent = p.msg || "";
+ } else if (evt.done) {
+ result = evt;
+ } else if (evt.error) {
+ throw new Error(evt.error);
+ }
+ } catch (e) { if (e.message && e.message.length > 20) throw e; }
+ }
+ }
+ if (!result) throw new Error("未收到生成结果");
  _nnOutlineData = result;
  renderOutlineResult(result);
- $("#nn-outline-status").textContent = `生成 ${result.count} 章`;
+ statusEl.textContent = `生成 ${result.count} 章`;
+ barEl.innerHTML = `<div style="font-size:11px;color:var(--success)">✅ 完成，共 ${result.count} 章（${Math.round((Date.now()-t0)/1000)}s）</div>`;
  _nnStep = 3;
  _nnRenderStep();
  } catch (e) {
  toastError("大纲生成失败", e);
- $("#nn-outline-status").textContent = "失败";
+ statusEl.textContent = "失败";
+ if (barEl) barEl.innerHTML = "";
  } finally {
- $("#nn-gen-outline").disabled = false;
+ btn.disabled = false;
  }
  };
  _nnRefreshExistingOutline();

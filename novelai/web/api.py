@@ -362,6 +362,67 @@ def api_outline_generate(req: dict) -> dict:
         raise HTTPException(500, f"{err_detail('大纲生成', e=e)} | {hint}")
 
 
+@router.post("/outline/generate-stream")
+async def api_outline_generate_stream(req: dict):
+    """分批生成大纲——SSE 流式推送进度。
+    每批 20 章，避免单次 AI 输出超 token 导致 JSON 截断。
+    """
+    from fastapi.responses import StreamingResponse
+    import queue as _qmod
+    import threading as _tmod
+
+    ai = AIClient()
+    if not ai.ready:
+        raise HTTPException(400, "AI 未配置 API key")
+    target = _safe_int(req.get("target_chapters"), 30)
+    target = max(3, min(500, target))
+    db = get_db()
+
+    def stream():
+        q: _qmod.Queue = _qmod.Queue()
+        done_flag = {"error": None, "result": None}
+
+        def on_phase(phase, payload):
+            q.put(("phase", {"phase": phase, **payload} if isinstance(payload, dict) else {"phase": phase, "msg": str(payload)}))
+
+        def _run():
+            try:
+                result = writer.generate_outline_batched(db, ai, target, on_phase=on_phase)
+                done_flag["result"] = result
+            except Exception as e:
+                import traceback
+                done_flag["error"] = f"{err_detail('大纲生成', e=e)} | {friendly_hint(e)}"
+                _log("error", err_detail('大纲流式生成', e=e))
+                _log("error", f"堆栈：{traceback.format_exc()[-400:]}")
+            finally:
+                retriever.invalidate_cache()
+                q.put(("done", None))
+
+        t = _tmod.Thread(target=_run, daemon=True)
+        t.start()
+        try:
+            while True:
+                try:
+                    tag, val = q.get(timeout=600)
+                except _qmod.Empty:
+                    yield f"data: {json.dumps({'error': '生成超时（10分钟无响应）'}, ensure_ascii=False)}\n\n"
+                    return
+                if tag == "phase":
+                    yield f"data: {json.dumps({'phase': val}, ensure_ascii=False)}\n\n"
+                elif tag == "done":
+                    if done_flag["error"]:
+                        yield f"data: {json.dumps({'error': done_flag['error']}, ensure_ascii=False)}\n\n"
+                    else:
+                        r = done_flag["result"] or {}
+                        yield f"data: {json.dumps({'done': True, 'chapters': r.get('chapters', []), 'structural_notes': r.get('structural_notes', ''), 'count': r.get('count', 0)}, ensure_ascii=False)}\n\n"
+                    return
+        except GeneratorExit:
+            pass  # 客户端断开
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @router.post("/chapter/new")
 def api_chapter_new(req: dict) -> dict:
     """新建空章节（手动建章，再调 /chapter/{idx}/write 让 AI 写）。"""

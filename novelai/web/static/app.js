@@ -963,7 +963,8 @@ function renderNewNovel() {
  const el = document.getElementById(id);
  if (el) el.addEventListener("input", _nnScheduleDraft);
  });
- $("#nn-reset").onchange = _nnScheduleDraft; // 兼容残留（若存在）
+ const _nnResetEl = $("#nn-reset");
+ if (_nnResetEl) _nnResetEl.onchange = _nnScheduleDraft; // 兼容残留（若存在）
  // 规模分段：点击填章节数
  document.querySelectorAll("#nn-scale-group .nn-seg").forEach(seg => {
  seg.onclick = () => {

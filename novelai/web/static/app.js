@@ -2377,7 +2377,16 @@ async function editorSave(opts = {}) {
  setEditorStatus("● 已保存", false);
  addLog("done", `[editor] 第 ${idx} 回已保存（${text.length} 字）`);
  // 自动保存(quiet)不弹 toast: 写作中每 30s 弹一次很打扰, 状态栏已有反馈; 手动保存才弹
- if (!opts.quiet) showToast(`已保存 · 第 ${idx} 回 ${text.length} 字`, "success");
+ if (!opts.quiet) {
+ showToast(`已保存 · 第 ${idx} 回 ${text.length} 字`, "success");
+ // 检测正文是否有实质变化（与上次保存差异>50字），提示重抽知识库
+ const prevLen = STATE_EDITOR._lastReindexLen?.[idx] ?? STATE_EDITOR.savedText?.length ?? 0;
+ if (Math.abs(text.length - prevLen) > 50) {
+ setTimeout(() => _promptReindex(idx), 800);
+ }
+ STATE_EDITOR._lastReindexLen = STATE_EDITOR._lastReindexLen || {};
+ STATE_EDITOR._lastReindexLen[idx] = text.length;
+ }
  const sb = document.getElementById("ed-btn-save");
  if (sb) { sb.disabled = false; sb.style.opacity = "1"; }
  } catch (e) {
@@ -2387,6 +2396,29 @@ async function editorSave(opts = {}) {
  _savingInFlight = false;
  const saveBtn = document.getElementById("ed-btn-save");
  if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = "1"; }
+ }
+}
+
+// 手动编辑后：提示重抽知识库（事件/伏笔/摘要/分层记忆），让 AI 感知改动
+async function _promptReindex(idx) {
+ const ok = await showConfirm(
+ `检测到第 ${idx} 回正文有较大改动。\n要让 AI 重新抽取事件、伏笔，并更新记忆库吗？\n（这样写后续章节时 AI 能感知你的改动）`,
+ "🔄 同步知识库"
+ );
+ if (ok) await _runReindex(idx);
+}
+
+async function _runReindex(idx) {
+ setEditorStatus(" 重新抽取知识库…", true);
+ addLog("info", `[reindex] 第 ${idx} 回重新抽取事件/伏笔/摘要`);
+ try {
+ const r = await API.post(`/editor/chapter/${idx}/reindex`, null, LLM_TIMEOUT_MS);
+ setEditorStatus("● 已保存", false);
+ showToast(`知识库已更新: ${r.events} 事件, ${r.threads} 伏笔${r.memory_updated ? ", 记忆已刷新" : ""}`, "success", 4000);
+ addLog("done", `[reindex] 第 ${idx} 回完成: ${r.events} 事件, ${r.threads} 伏笔`);
+ } catch (e) {
+ setEditorStatus("● 已保存", false);
+ toastError("知识库更新失败", e);
  }
 }
 

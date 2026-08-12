@@ -1615,6 +1615,83 @@ def api_editor_save(idx: int = ApiPath(ge=1, description="章节号, ≥1"), req
     return {"ok": True, "word_count": len(text), "version_id": new_vid}
 
 
+@router.post("/editor/chapter/{idx}/reindex")
+def api_editor_reindex(idx: int = ApiPath(ge=1, description="章节号, ≥1")) -> dict:
+    """手动编辑后重新抽取：事件 + 伏笔 + 摘要 + 更新分层记忆。
+    让 AI 的记忆库与编辑后的正文保持同步。
+    """
+    ai = _require_ai()
+    db = get_db()
+    chapter = kb.get_chapter_by_idx(db, idx)
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    text = (chapter.get("final_text") or chapter.get("draft") or "").strip()
+    if not text:
+        raise HTTPException(400, "章节无正文，无法抽取")
+    ch_id = chapter["id"]
+    results = {"events": 0, "threads": 0, "summary_updated": False, "memory_updated": False}
+
+    # 1. 重抽摘要
+    try:
+        summary = writer.summarize_chapter(db, ai, idx, text)
+        kb.update_chapter(db, ch_id, summary=summary)
+        results["summary_updated"] = True
+    except Exception as e:
+        log_exception("reindex-summarize", e)
+
+    # 2. 重抽事件（先删旧再抽新）
+    try:
+        db.execute("DELETE FROM event WHERE chapter_id=?", (ch_id,))
+        events = writer.extract_events(db, ai, idx, text, summary)
+        seq_to_id = {}
+        for i, ev in enumerate(events, 1):
+            if not isinstance(ev, dict):
+                continue
+            st = ev.get("story_time_offset")
+            base_t = chapter.get("story_time_start") or 0
+            t_end = chapter.get("story_time_end") or base_t
+            actual_t = base_t + (t_end - base_t) * float(st or 0.5)
+            new_id = kb.add_event(
+                db, chapter_id=ch_id, story_time=actual_t, sequence_in_chapter=i,
+                title=ev.get("title", f"事件{i}"), summary=ev.get("summary", ""),
+                event_type=ev.get("event_type", "action"),
+                location=ev.get("location", chapter.get("location", "")),
+                cause_event_ids=[], participants=ev.get("_participants_ids") or [],
+                importance=int(ev.get("importance") or 3),
+            )
+            seq_to_id[i] = new_id
+        # 回填因果链
+        for i, ev in enumerate(events, 1):
+            if not isinstance(ev, dict) or i not in seq_to_id:
+                continue
+            raw = ev.get("cause_event_ids") or []
+            mapped = [seq_to_id[int(x)] for x in raw
+                      if isinstance(x, (int, float, str)) and str(x).isdigit() and int(x) in seq_to_id]
+            if mapped:
+                db.execute("UPDATE event SET cause_event_ids=? WHERE id=?", (Database.to_json(mapped), seq_to_id[i]))
+        results["events"] = len(events)
+    except Exception as e:
+        log_exception("reindex-events", e)
+
+    # 3. 重抽伏笔
+    try:
+        thread_result = writer.extract_threads_for_chapter(db, ai, idx)
+        results["threads"] = thread_result.get("added", 0) + thread_result.get("linked", 0)
+    except Exception as e:
+        log_exception("reindex-threads", e)
+
+    # 4. 更新分层记忆
+    try:
+        writer._update_layered_memory(db, ai, idx, ch_id, summary)
+        results["memory_updated"] = True
+    except Exception as e:
+        log_exception("reindex-memory", e)
+
+    retriever.invalidate_cache()
+    results["ok"] = True
+    return results
+
+
 @router.delete("/chapter/{idx}")
 def api_delete_chapter(idx: int = ApiPath(ge=1, description="章节号, ≥1")) -> dict:
     """删除章节 + 级联清理（event/report/comment/version/milestone/rel_evolution），

@@ -14,7 +14,7 @@ import io
 import asyncio
 import os
 
-from novelai.config import CONFIG, _project_root
+from novelai.config import CONFIG, _project_root, context_budget
 from novelai.db import Database
 from novelai import knowledge as kb
 from novelai.ai_client import AIClient, AICallError
@@ -2393,7 +2393,7 @@ class EditorHarness:
             )
         else:
             # 整章模式：长章节截断防超 token（保留开头+结尾，中间省略）
-            full_text = _smart_text_preview(self.current_text, instruction, max_chars=8000)
+            full_text = _smart_text_preview(self.current_text, instruction, max_chars=context_budget()["max_text_preview"])
             user = (
                 f"## 用户指令\n{instruction}\n\n"
                 f"## 当前章节正文\n{full_text}\n\n"

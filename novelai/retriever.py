@@ -60,7 +60,7 @@ def _semantic_recall(
     （调用方应与原 LIKE 匹配取并集，而非替换）。
     """
     # 全局开关检查
-    from .config import CONFIG
+    from .config import CONFIG, context_budget
     if not CONFIG.ai.enable_embedding:
         return set()
     if not query or not items:
@@ -152,12 +152,16 @@ def _thread_brief(t: dict) -> str:
 def build_chapter_context(
     db: Database,
     chapter_idx: int,
-    recent_window: int = 3,
+    recent_window: int = 0,
 ) -> dict:
     """
     为生成 chapter_idx 的正文准备上下文。
     返回的 dict 可直接喂给 prompts.CHAPTER_USER_TEMPLATE。
     """
+    # 动态上下文预算（根据模型窗口大小调整裁剪上限）
+    budget = context_budget()
+    if recent_window <= 0:
+        recent_window = budget["max_recent_window"]
     project = kb.get_or_create_project(db)
     # B-新56: 防御 chapter_idx ≤0 (前端 Path(ge=1) 兜了, 但 retriever 也兜)
     if not isinstance(chapter_idx, int) or chapter_idx < 1:
@@ -242,7 +246,7 @@ def build_chapter_context(
         if c:
             other_chars_raw.append(c)
     ranked = _rank_characters(other_chars_raw)
-    MAX_FULL_PROFILES = 8  # 展开完整档案的上限（防 token 爆炸）
+    MAX_FULL_PROFILES = budget["max_full_profiles"]  # 动态：大窗口30，小窗口8
     other_profiles_text = ""
     for i, c in enumerate(ranked):
         if i < MAX_FULL_PROFILES:
@@ -349,7 +353,7 @@ def build_chapter_context(
         if t["status"] == "developing" or trigger:
             thread_parts.append(_thread_brief(t))
     # top-K 裁剪：长篇可能有几十条伏笔，全塞会超 token。优先 developing，最多 15 条
-    MAX_THREADS = 15
+    MAX_THREADS = budget["max_threads"]  # 动态：大窗口50，小窗口15
     if len(thread_parts) > MAX_THREADS:
         thread_parts = thread_parts[:MAX_THREADS]
     threads_text = "\n".join(thread_parts) if thread_parts else "（无）"
@@ -375,8 +379,8 @@ def build_chapter_context(
     key_events = db.query(
         "SELECT e.title, e.summary, e.story_time, e.event_type, c.idx as ch_idx "
         "FROM event e JOIN chapter c ON e.chapter_id=c.id "
-        "WHERE e.importance>=4 AND c.idx<? ORDER BY e.story_time DESC LIMIT 20",
-        (chapter_idx,),
+        f"WHERE e.importance>=4 AND c.idx<? ORDER BY e.story_time DESC LIMIT ?",
+        (chapter_idx, budget["max_key_events"]),
     )
     if key_events:
         ke_parts = [f"第{e['ch_idx']}章 @{e['story_time']} [{e['event_type']}] {e['title']}：{(e['summary'] or '')[:40]}" for e in key_events]
@@ -415,7 +419,7 @@ def build_consistency_context(
     chapter_text: str,
 ) -> dict:
     """为一致性审查准备上下文（更广、更全）"""
-    ctx = build_chapter_context(db, chapter_idx, recent_window=5)
+    ctx = build_chapter_context(db, chapter_idx, recent_window=budget["max_recent_window"])
     ctx["chapter_text"] = chapter_text
 
     # 事实库：top-K 裁剪（长篇可能有几百条事实，全塞会超 token 导致 JSON 截断）
@@ -423,7 +427,7 @@ def build_consistency_context(
     if all_facts:
         # 按 established_chapter_id 降序（近章事实优先），最多 60 条
         sorted_facts = sorted(all_facts, key=lambda f: f.get("established_chapter_id") or 0, reverse=True)
-        ctx["world_facts"] = "\n".join(_fact_brief(f) for f in sorted_facts[:60])
+        ctx["world_facts"] = "\n".join(_fact_brief(f) for f in sorted_facts[:budget["max_facts"]])
     else:
         ctx["world_facts"] = "（事实库为空）"
 
@@ -446,7 +450,7 @@ def build_consistency_context(
     if active_threads:
         # developing 优先，最多 20 条
         sorted_at = sorted(active_threads, key=lambda t: 0 if t.get("status") == "developing" else 1)
-        ctx["active_threads"] = "\n".join(_thread_brief(t) for t in sorted_at[:20])
+        ctx["active_threads"] = "\n".join(_thread_brief(t) for t in sorted_at[:budget["max_active_threads"]])
     else:
         ctx["active_threads"] = "（无）"
     return ctx

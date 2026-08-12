@@ -19,7 +19,7 @@ from .db import Database
 from . import knowledge as kb
 from . import retriever
 from .ai_client import AIClient, AICallError
-from .config import CONFIG
+from .config import CONFIG, context_budget
 from . import prompts
 
 
@@ -189,7 +189,7 @@ def generate_chapter(
              f"请紧接前文继续写，不要重复已有内容，不要写总结或结尾（除非已接近目标字数）。"
              f"继续展开新的场景、对话、冲突。"},
             {"role": "user", "content": f"【本章大纲】\n{ctx.get('outline', '')}\n\n"
-             f"【已写的前文最后 800 字】\n...{text[-800:]}\n\n"
+             f"【已写的前文最后 {context_budget()['max_cont_preview']} 字】\n...{text[-context_budget()['max_cont_preview']:]}\n\n"
              f"请紧接上文继续写约 {min(remaining, 5000)} 字。直接输出正文，不要标题或解释。"},
         ]
         cont_text = ""
@@ -1069,7 +1069,7 @@ def _agentic_reflect(db, ai, chapter_idx, text, report, on_phase=None):
         f"请审查你的正文，判断这些问题是否确实存在。如果确实需要修正，"
         f"请输出修正后的完整正文（只改有问题的段落，保留其他内容不变）。"
         f"如果这些问题是误报或已不存在，直接回复原正文。\n\n"
-        f"【正文（末尾 2000 字）】\n{text[-2000:]}"
+        f"【正文（末尾 {context_budget()['max_reflect_text']} 字）】\n{text[-context_budget()['max_reflect_text']:]}"
     )
     messages = [
         {"role": "system", "content": "你是小说编辑。请客观审查自己的作品，诚实地判断问题是否存在。"},

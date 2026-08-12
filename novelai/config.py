@@ -106,6 +106,9 @@ class AIConfig:
     temperature: float = 0.85
     max_tokens: int = 8000  # 单次 LLM 调用最大 token（8000 ≈ 4000-6000 中文字）
     timeout: int = 120
+    # 模型上下文窗口（token 数）。GLM-5.2=128K, GPT-4o=128K, Claude=200K
+    # 用于动态调整 context 裁剪策略：大窗口少裁剪，小窗口多裁剪
+    context_window: int = 128000
 
 
 @dataclass
@@ -305,3 +308,70 @@ def reload_config() -> None:
     new = AppConfig.from_env()
     CONFIG.ai = new.ai
     CONFIG.db_path = new.db_path
+
+
+# ============================================================
+# 动态上下文预算管理（1M 上下文时代的 token 分配器）
+# ============================================================
+
+def _available_input_tokens() -> int:
+    """计算可用于输入的 token 数 = 上下文窗口 - 输出预留 - 安全余量"""
+    window = CONFIG.ai.context_window
+    output_reserve = max(CONFIG.ai.max_tokens, 8000)
+    safety_margin = 2000  # system prompt + 工具定义等开销
+    return max(8000, window - output_reserve - safety_margin)
+
+
+def context_budget() -> dict:
+    """根据模型上下文窗口大小，动态返回各维度的裁剪上限。
+
+    小窗口(8K)：保守裁剪（原策略）
+    中窗口(32K)：适度放宽
+    大窗口(128K+)：尽量全量，1M 上下文几乎不裁剪
+    """
+    avail = _available_input_tokens()
+    # 中文约 1.5 字/token，粗估可用字符数
+    avail_chars = int(avail * 1.5)
+
+    if avail >= 100000:
+        # 大窗口（128K+）：几乎不裁剪
+        return {
+            "max_full_profiles": 30,       # 人物档案几乎全展开
+            "max_threads": 50,             # 伏笔几乎全塞
+            "max_facts": 200,              # 事实几乎全塞
+            "max_key_events": 50,          # 关键事件放宽
+            "max_active_threads": 50,      # 一致性检查伏笔放宽
+            "max_recent_window": 8,        # 近章窗口扩大
+            "max_text_preview": 50000,     # 编辑器正文几乎不截断
+            "max_cont_preview": 10000,     # 续写前文从800扩到10000
+            "max_reflect_text": 10000,     # 自反思正文从2000扩到10000
+            "tier": "large",
+        }
+    elif avail >= 30000:
+        # 中窗口（32K）：适度放宽
+        return {
+            "max_full_profiles": 15,
+            "max_threads": 25,
+            "max_facts": 100,
+            "max_key_events": 30,
+            "max_active_threads": 30,
+            "max_recent_window": 6,
+            "max_text_preview": 20000,
+            "max_cont_preview": 3000,
+            "max_reflect_text": 5000,
+            "tier": "medium",
+        }
+    else:
+        # 小窗口（8K）：保守裁剪（原策略）
+        return {
+            "max_full_profiles": 8,
+            "max_threads": 15,
+            "max_facts": 60,
+            "max_key_events": 20,
+            "max_active_threads": 20,
+            "max_recent_window": 5,
+            "max_text_preview": 8000,
+            "max_cont_preview": 800,
+            "max_reflect_text": 2000,
+            "tier": "small",
+        }

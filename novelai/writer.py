@@ -725,6 +725,19 @@ def write_chapter_pipeline(
     kb.apply_status_from_events(db, events, _name_to_id)
     kb.update_appearances(db, events, _name_to_id, chapter_idx)
 
+    # 伏笔线抽取（H修复：原 pipeline 只抽事件不抽伏笔，导致写章时伏笔系统完全失效）
+    # 伏笔只在事件入库后抽取，保证 related_events 可链接
+    if on_phase: on_phase("threads", "抽取伏笔线…")
+    try:
+        th_result = extract_threads_for_chapter(db, ai, chapter_idx)
+        if on_phase:
+            added = th_result.get("added", 0) if th_result.get("ok") else 0
+            linked = th_result.get("linked", 0) if th_result.get("ok") else 0
+            if added or linked:
+                on_phase("threads", f"新增伏笔 {added} 条，关联 {linked} 条")
+    except Exception:
+        pass  # 伏笔抽取失败不影响写章主流程
+
     # 一致性
     if on_phase: on_phase("consistency", "一致性检查…")
     report = run_consistency_check(db, ai, chapter_idx, text)
@@ -943,16 +956,22 @@ def _update_layered_memory(db: Database, ai: AIClient, chapter_idx: int, ch_id: 
     if vol_id:
         kb.update_volume(db, vol_id["id"], synopsis=vol_synopsis)
 
-    # L3: 检测跨卷（上一章的 volume_idx 与本章不同）
-    prev_ch = kb.get_prev_chapter(db, chapter_idx)
-    if prev_ch and prev_ch.get("volume_idx") and prev_ch["volume_idx"] != vol_idx:
-        # 跨卷：把上一卷 synopsis 并入全书摘要
-        prev_vol = kb.get_volume_by_idx(db, prev_ch["volume_idx"])
-        prev_vol_syn = (prev_vol.get("synopsis") if prev_vol else "") or ""
-        if prev_vol_syn:
-            book_sum = kb.get_book_summary(db)
-            cur_book = (book_sum["summary"] if book_sum else "") or ""
-            combined = f"{cur_book}\n\n第{prev_ch['volume_idx']}卷:{prev_vol_syn}".strip()
+    # L3: 全书摘要——每章都维护（旧逻辑只在跨卷时触发，单卷小说永远没有 L3）
+    # 策略：合并所有卷 synopsis → 超阈值时压缩 → 写 book_summary
+    try:
+        all_vols = kb.list_volumes(db) if hasattr(kb, "list_volumes") else []
+        if not all_vols:
+            # 兜底：至少把当前卷加进去
+            all_vols = [vol] if vol else []
+        vol_parts = []
+        for v in all_vols:
+            v_syn = (v.get("synopsis") if v else "") or ""
+            if v_syn and v_syn != "（暂无）":
+                vidx = v.get("idx", 1)
+                vol_parts.append(f"第{vidx}卷:{v_syn}")
+        combined = "\n\n".join(vol_parts).strip()
+        if combined:
+            # 超 600 字才压缩（避免每章都调 AI 浪费 token）
             if len(combined) > 600:
                 try:
                     combined = _compress_summary(ai, combined, max_chars=500, desc="全书进展摘要")
@@ -961,6 +980,8 @@ def _update_layered_memory(db: Database, ai: AIClient, chapter_idx: int, ch_id: 
             all_chapters = kb.list_chapters(db)
             max_idx = max((c["idx"] for c in all_chapters), default=chapter_idx)
             kb.save_book_summary(db, combined, chapter_range=f"1-{max_idx}")
+    except Exception:
+        pass  # L3 失败不影响写章
 
 
 def _compress_summary(ai: AIClient, text: str, max_chars: int = 600, desc: str = "摘要") -> str:

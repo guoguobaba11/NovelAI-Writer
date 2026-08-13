@@ -2079,6 +2079,9 @@ async function streamWriteChapter(idx) {
  // 必须等它完成后再写自己的气泡, 否则并发竞争导致写章过程被覆盖
  await new Promise(r => setTimeout(r, 500));
  }
+ // 防 AI 并发：已有 AI 任务在跑时拒绝
+ if (_aiStreaming) { showToast("AI 正在运行，请等待完成", "warning"); return; }
+ _aiStreaming = true;
  // 切到 AI tab
  const aiTab = Array.from(document.querySelectorAll(".ed-tab")).find(t => t.textContent.includes("AI"));
  if (aiTab) aiTab.click();
@@ -2193,6 +2196,8 @@ async function streamWriteChapter(idx) {
  } catch (e) {
  prog.textContent = `错误：${e.message || e}`;
  prog.style.color = "var(--danger)";
+ } finally {
+ _aiStreaming = false;
  }
 }
 
@@ -2535,6 +2540,7 @@ async function editorSave(opts = {}) {
  const idx = STATE_EDITOR.chapterIdx;
  if (!idx || idx < 1 || isNaN(idx)) return;
  if (_savingInFlight) { addLog("warn", "[editor] 保存中, 请稍等"); return; }
+ if (_aiStreaming) { showToast("AI 正在运行，完成后再保存（AI 改稿需点采纳）", "warning", 3000); return; }
  const text = $("#ed-text").value;
  _savingInFlight = true;
  const saveBtn = document.getElementById("ed-btn-save");
@@ -7624,53 +7630,16 @@ async function refreshAll() {
 }
 
 async function regenerateCurrentChapter() {
- if (!STATE.dashboard?.kpis?.current_chapter_idx) {
- showToast("当前没有已写章节可重新生成", "warning");
- return;
- }
- const idx = STATE.dashboard.kpis.current_chapter_idx;
- if (!(await showConfirm(`重新生成第 ${idx} 章？将覆盖现有正文。`))) return;
- try {
- // 后端 target_words 是 Query 参数（不是 body 字段），必须放进 URL query string
- const r = await API.post(`/regenerate/${idx}?target_words=${CHAPTER_TARGET_WORDS}`);
- // 后端在已有任务运行时返回 {started:false, error}: 此时不该进入轮询傻等
- if (r && r.started === false) {
- showToast(r.error || "已有任务在运行，请稍后再试", "warning");
- return;
- }
- addLog("info", `[regen] 已请求生成第 ${idx} 章`);
- setEditorStatus(" AI 生成中…", true);
- // 轮询等待完成（timeoutId 先声明, 完成/出错时都要清掉, 否则超时回调会误杀已结束的状态）
- let timeoutId = null;
- const pollId = setInterval(async () => {
- try {
- const r = await API.get("/progress_live");
- if (!r.running) {
- clearInterval(pollId);
- if (timeoutId) clearTimeout(timeoutId);
- // BUG 修复：只在用户仍在该章时才自动重载；否则不强行切章覆盖用户当前编辑
- if (STATE_EDITOR.chapterIdx === idx) {
- await loadEditorChapter(idx);
- addLog("done", `[regen] 第 ${idx} 章已重新生成`);
- } else {
- // 用户已切到别的章——刷新数据但不强行跳转，提示去查看
- refreshAll();
- showToast(`第 ${idx} 章已重新生成（点此查看）`, "success", 6000);
- addLog("done", `[regen] 第 ${idx} 章已重新生成（用户已切走，未自动跳转）`);
- }
- setEditorStatus("● 就绪", false);
- } else if (r.log && r.log.length > 0) {
- const last = r.log[r.log.length - 1];
- setEditorStatus(` ${last.stage || '生成中'}…`, true);
- }
- } catch (e) {
- clearInterval(pollId);
- if (timeoutId) clearTimeout(timeoutId);
- setEditorStatus("● 就绪", false);
- }
- }, 2000);
- timeoutId = setTimeout(() => { clearInterval(pollId); setEditorStatus("● 就绪", false); }, REGEN_TIMEOUT_MS); // 超时强停
- } catch (e) { toastError("启动失败", e); }
+ const idx = STATE_EDITOR.chapterIdx;
+ if (!idx) { showToast("请先选择一个章节", "warning"); return; }
+ // 检查未保存的手动修改
+ const ta = $("#ed-text");
+ const hasUnsaved = ta && ta.value !== STATE_EDITOR.savedText && ta.value.trim().length > 0;
+ const warn = hasUnsaved ? "\n\n⚠ 你有未保存的修改，重生会覆盖丢失！" : "";
+ const existing = (ta && ta.value.trim()) ? `（当前 ${(ta.value.trim().length)} 字正文将被覆盖）` : "";
+ if (!(await showConfirm(`AI 重生第 ${idx} 章？\n从大纲重新撰写整章正文${existing}。${warn}`, "! AI 重生"))) return;
+ // 统一走 streamWriteChapter（SSE 流式，用户实时看到 AI 写作过程）
+ await streamWriteChapter(idx);
 }
 
 // =================== 初始化 ===================
@@ -8113,18 +8082,18 @@ window.addEventListener("DOMContentLoaded", () => {
  // AI 撰写按钮单独绑定（检测空文本走 streamWriteChapter）
  if (chip.id === "ed-chip-write") {
  chip.onclick = () => {
- const aiTab = document.getElementById("ed-tab-ai");
- if (aiTab && !aiTab.classList.contains("active")) aiTab.click();
  const idx = STATE_EDITOR.chapterIdx;
  const text = $("#ed-text")?.value?.trim() || "";
  if (!text) {
  // 空文本：AI 从零撰写
  if (!idx) { showToast("请先加载一个章节"); return; }
+ const aiTab = document.getElementById("ed-tab-ai");
+ if (aiTab && !aiTab.classList.contains("active")) aiTab.click();
  showToast("AI 将根据大纲撰写本章全文…");
  streamWriteChapter(idx);
  } else {
- // 有正文：走润色
- sendEditInstruction("润色本章的对话，让语言更自然有性格");
+ // 有正文：不是"撰写"而是"重生"——引导用户用顶栏 AI 重生按钮
+ showToast("本章已有正文。点顶栏「AI 重生」可整章重写，或用下方指令做局部修改", "info", 4000);
  }
  };
  return;

@@ -489,6 +489,17 @@ function goto(target, params = {}) {
 // 顶部 / 底部 / onboarding
 $$(".wf-item").forEach(btn => {
  btn.onclick = () => {
+ const action = btn.dataset.action;
+ if (action === "review") { showReviewModal(); return; }
+ if (action === "toggle-sub") {
+ const sub = document.getElementById("wf-sub-" + btn.dataset.sub);
+ if (sub) {
+ const open = sub.style.display !== "none";
+ sub.style.display = open ? "none" : "";
+ btn.classList.toggle("wf-open", !open);
+ }
+ return;
+ }
  const target = btn.dataset.target;
  if (target) goto(target);
  };
@@ -515,6 +526,10 @@ if (wfToggle) {
  // 兼容旧 localStorage 状态, 清掉不再用
  try { localStorage.removeItem("novelai-wf-others-open"); } catch (e) {}
 }
+// 可视化子菜单项绑定 goto
+$$(".wf-sub-item").forEach(btn => {
+ btn.onclick = () => { const t = btn.dataset.target; if (t) goto(t); };
+});
 
 // =================== 顶部 ===================
 function renderTopbar() {

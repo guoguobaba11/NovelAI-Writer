@@ -625,6 +625,20 @@ body.focus-mode #topbar { height: 0; opacity: 0; pointer-events: none; overflow:
 .sidebar-sub { font-size: 11px; color: var(--fg-dim); margin-top: 2px; font-style: italic; }
 .wf-nav { display: flex; flex-direction: column; gap: 2px; }
 .wf-group { display: flex; flex-direction: column; margin-bottom: 8px; }
+.wf-section-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--fg-dim); padding: 8px 20px 2px; margin-top: 4px;
+}
+.wf-caret { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
+.wf-item[data-action="toggle-sub"].wf-open .wf-caret { transform: rotate(180deg); }
+.wf-sub { padding-left: 20px; }
+.wf-sub-item {
+  background: transparent; border: none; text-align: left;
+  display: block; padding: 4px 12px; margin: 1px 8px 1px 4px;
+  border-radius: var(--radius); color: var(--fg-muted);
+  font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.wf-sub-item:hover { background: var(--bg-hover); color: var(--fg); }
 .wf-item {
   background: transparent;
   border: none;

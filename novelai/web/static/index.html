@@ -7,7 +7,7 @@
  <!-- 不依赖外网字体：纯系统字体 fallback（Inter / PingFang SC / 微软雅黑 / Songti SC / Consolas 等），
  避免 webview 启动时因 fonts.googleapis.com 阻塞而黑屏。-->
  <!-- B-新190: 加 ?v= 时间戳强破刷新, 防 PyWebView cache 旧 CSS 看不到新 hidden 修 -->
- <link rel="stylesheet" href="/static/style.css?v=4.0.9" />
+ <link rel="stylesheet" href="/static/style.css?v=4.1.0" />
  <!-- echarts 本地打包，不走 CDN（防离线/网慢时图表空白）。vis-network 已移除（死依赖，7 个可视化全用 echarts） -->
  <script src="/static/echarts.min.js"></script>
 </head>
@@ -59,42 +59,92 @@
  <div class="sidebar-sub">按使用频率分组</div>
  </div>
  <nav class="wf-nav">
- <!-- ===== 仪表盘（始终在最上） ===== -->
- <div class="wf-group" data-group="dashboard">
+ <!-- ===== 写作 ===== -->
+ <div class="wf-group" data-group="write">
+ <div class="wf-section-label">写作</div>
  <button class="wf-item wf-active" data-action="goto" data-target="dashboard">
  <span class="wf-ico"></span>
  <span class="wf-label">仪表盘</span>
  <span class="wf-tag" id="wf-tag-dashboard"></span>
  </button>
- <!-- B-优9: 仪表盘跟 5 常用之间细分隔线 -->
- <div class="wf-divider"></div>
- </div>
-
- <!-- ===== 常用：每天都会用的 5 项 ===== -->
- <div class="wf-group" data-group="freq">
- <button class="wf-item wf-pinned" data-action="goto" data-target="editor">
+ <button class="wf-item" data-action="goto" data-target="editor">
  <span class="wf-ico"></span>
  <span class="wf-label">AI 编辑器</span>
  <span class="wf-shortcut">E</span>
  </button>
- <button class="wf-item wf-pinned" data-action="goto" data-target="scan">
+ </div>
+
+ <!-- ===== 诊断 ===== -->
+ <div class="wf-group" data-group="diag">
+ <div class="wf-section-label">诊断</div>
+ <button class="wf-item" data-action="goto" data-target="scan">
  <span class="wf-ico"></span>
- <span class="wf-label">扫描问题</span>
+ <span class="wf-label">一键扫描</span>
  <span class="wf-shortcut">S</span>
  </button>
- <button class="wf-item wf-pinned" data-action="goto" data-target="opt-all">
+ <button class="wf-item" data-action="review">
+ <span class="wf-ico"></span>
+ <span class="wf-label">审阅看板</span>
+ </button>
+ <button class="wf-item" data-action="goto" data-target="opt-all">
  <span class="wf-ico"></span>
  <span class="wf-label">AI 修改建议</span>
  <span class="wf-shortcut">O</span>
  </button>
- <button class="wf-item wf-pinned" data-action="goto" data-target="pipeline">
+ <button class="wf-item" data-action="goto" data-target="pipeline">
  <span class="wf-ico"></span>
  <span class="wf-label">修改流水线</span>
  </button>
- <button class="wf-item wf-pinned" data-action="goto" data-target="import">
+ </div>
+
+ <!-- ===== 管理 ===== -->
+ <div class="wf-group" data-group="manage">
+ <div class="wf-section-label">管理</div>
+ <button class="wf-item" data-action="goto" data-target="chapters">
  <span class="wf-ico"></span>
- <span class="wf-label">导入 MD 手稿</span>
+ <span class="wf-label">章节管理</span>
  </button>
+ <button class="wf-item" data-action="goto" data-target="characters">
+ <span class="wf-ico"></span>
+ <span class="wf-label">角色档案</span>
+ </button>
+ <button class="wf-item" data-action="goto" data-target="events">
+ <span class="wf-ico"></span>
+ <span class="wf-label">事件/伏笔</span>
+ </button>
+ <button class="wf-item" data-action="goto" data-target="import">
+ <span class="wf-ico"></span>
+ <span class="wf-label">导入手稿</span>
+ <span class="wf-shortcut">I</span>
+ </button>
+ </div>
+
+ <!-- ===== 更多 ===== -->
+ <div class="wf-group" data-group="more">
+ <div class="wf-section-label">更多</div>
+ <button class="wf-item" data-action="goto" data-target="structure">
+ <span class="wf-ico"></span>
+ <span class="wf-label">叙事结构</span>
+ </button>
+ <button class="wf-item" data-action="goto" data-target="mbti">
+ <span class="wf-ico"></span>
+ <span class="wf-label">MBTI 标注</span>
+ </button>
+ <button class="wf-item" data-action="toggle-sub" data-sub="viz">
+ <span class="wf-ico"></span>
+ <span class="wf-label">可视化</span>
+ <span class="wf-caret">▾</span>
+ </button>
+ <div class="wf-sub" id="wf-sub-viz" style="display:none">
+ <button class="wf-sub-item" data-action="goto" data-target="knowledge_graph">知识图谱</button>
+ <button class="wf-sub-item" data-action="goto" data-target="timeline">时间线</button>
+ <button class="wf-sub-item" data-action="goto" data-target="chain">事件因果链</button>
+ <button class="wf-sub-item" data-action="goto" data-target="rhythm">节奏曲线</button>
+ <button class="wf-sub-item" data-action="goto" data-target="matrix">MBTI 矩阵</button>
+ <button class="wf-sub-item" data-action="goto" data-target="arcs">成长线</button>
+ <button class="wf-sub-item" data-action="goto" data-target="relcurve">亲密度曲线</button>
+ <button class="wf-sub-item" data-action="goto" data-target="network">关系网络</button>
+ </div>
  </div>
 
  </nav>
@@ -799,7 +849,7 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  </div>
 
- <script src="/static/app.js?v=2.2.3"></script>
+ <script src="/static/app.js?v=2.3.0"></script>
 
 <!-- ===== 工作区切换浮层（body 级，脱离顶栏裁剪） ===== -->
 <div class="ws-menu" id="ws-menu" style="display:none">
@@ -821,45 +871,14 @@ novel&gt; set-mbti 李琰 ENTJ</pre>
  </div>
  </div>
  <div class="menu-drawer open">
- <div class="menu-drawer-head"><span class="tm-group-ico">🗂️</span>管理</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="chapters">章节 / 卷管理</button>
- <button class="topbar-menu-item" data-action="goto" data-target="characters">人物档案</button>
- </div>
- </div>
- <div class="menu-drawer open">
- <div class="menu-drawer-head"><span class="tm-group-ico">✨</span>AI · 迁移</div>
+ <div class="menu-drawer-head"><span class="tm-group-ico">🔧</span>工具</div>
  <div class="menu-drawer-body">
  <button class="topbar-menu-item" data-action="goto" data-target="ai-extract">AI 自动抽取</button>
  <button class="topbar-menu-item" data-action="migrate-show"> 跨设备迁移</button>
- </div>
- </div>
- </div>
- <div class="tm-col">
- <div class="menu-drawer open">
- <div class="menu-drawer-head"><span class="tm-group-ico">📊</span>洞察</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="knowledge_graph">知识图谱</button>
- <button class="topbar-menu-item" data-action="goto" data-target="timeline">时间线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="chain">事件因果链</button>
- <button class="topbar-menu-item" data-action="goto" data-target="rhythm">节奏曲线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="matrix">MBTI 矩阵</button>
- <button class="topbar-menu-item" data-action="goto" data-target="arcs">成长线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="relcurve">亲密度曲线</button>
- <button class="topbar-menu-item" data-action="goto" data-target="network">关系网</button>
- </div>
- </div>
- <div class="menu-drawer open">
- <div class="menu-drawer-head"><span class="tm-group-ico">🏷️</span>标注</div>
- <div class="menu-drawer-body">
- <button class="topbar-menu-item" data-action="goto" data-target="mbti">MBTI 标注</button>
- <button class="topbar-menu-item" data-action="goto" data-target="events">事件 / 伏笔 / 事实</button>
- <button class="topbar-menu-item" data-action="goto" data-target="structure">叙事结构</button>
  <button class="topbar-menu-item" data-action="goto" data-target="vocab-show">用词一致性</button>
- <button class="topbar-menu-item" data-action="goto" data-target="review-show">审稿进度</button>
  </div>
  </div>
  </div>
- </div>
+</div>
 </body>
 </html>

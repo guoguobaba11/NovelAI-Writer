@@ -1645,10 +1645,13 @@ function renderCharacterProfile(profile) {
  }
  // 操作按钮
  html += `<div class="detail-section" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+ <button class="btn small primary" id="btn-edit-profile-${c.id}"> 编辑人设</button>
  <button class="btn small" id="btn-edit-mbti-${c.id}">设置 MBTI</button>
  <button class="btn small" id="btn-set-status-${c.id}">修改状态</button>
  </div>`;
  $("#detail-body").innerHTML = html;
+ const editBtn = document.getElementById(`btn-edit-profile-${c.id}`);
+ if (editBtn) editBtn.onclick = () => editCharacterDialog(c);
  const mbtiBtn = document.getElementById(`btn-edit-mbti-${c.id}`);
  if (mbtiBtn) mbtiBtn.onclick = () => setMbtiDialog(c);
  const statusBtn = document.getElementById(`btn-set-status-${c.id}`);
@@ -1679,6 +1682,59 @@ function setStatusDialog(c) {
  } catch (e) { toastError("修改状态失败", e); }
  };
  });
+}
+
+// 编辑角色人设核心字段（基础信息/性格/说话风格/能力/弧光/别名）
+function editCharacterDialog(c) {
+ const fields = [
+ {key: "basic_info", label: "基础信息", placeholder: "年龄、身份、外貌、背景…"},
+ {key: "personality", label: "性格特质", placeholder: "MBTI、核心性格、行为模式…"},
+ {key: "speech_style", label: "说话风格", placeholder: "口头禅、句式特点、语气…"},
+ {key: "abilities", label: "能力", placeholder: "技能、特长、战斗方式…"},
+ {key: "arc", label: "角色弧光", placeholder: "起点→转折→终点的成长轨迹…"},
+ {key: "aliases", label: "别名", placeholder: "逗号分隔，如：小明,明哥"},
+ ];
+ const rows = fields.map(f => {
+ const val = f.key === "aliases" ? (c.aliases || []).join(", ") : (c[f.key] || "");
+ const isArea = f.key !== "aliases";
+ return `<div style="margin-bottom:10px">
+ <label style="font-size:12px;color:var(--fg-muted);display:block;margin-bottom:2px">${f.label}</label>
+ ${isArea
+ ? `<textarea id="ec-${f.key}" class="nn-input" style="width:100%;min-height:60px;resize:vertical;font-size:13px" placeholder="${f.placeholder}">${ESC(val)}</textarea>`
+ : `<input id="ec-${f.key}" class="nn-input" style="width:100%;font-size:13px" placeholder="${f.placeholder}" value="${ESC(val)}">`}
+ </div>`;
+ }).join("");
+ showModal(`
+ <div style="max-width:560px">
+ <div style="margin-bottom:12px">
+ <h3 style="margin:0 0 4px">编辑人设：${ESC(c.name)}</h3>
+ <p style="font-size:11px;color:var(--fg-dim);margin:0">修改后，后续 AI 写章会自动使用新人设。已写章节可跑「全本扫描」检查一致性。</p>
+ </div>
+ ${rows}
+ <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+ <button class="btn small" onclick="hideModal()">取消</button>
+ <button class="btn small primary" id="ec-save">保存</button>
+ </div>
+ </div>`);
+ $("#ec-save").onclick = async () => {
+ const body = {char_id: c.id};
+ fields.forEach(f => { const el = $("#ec-" + f.key); if (el) body[f.key] = el.value; });
+ $("#ec-save").disabled = true;
+ $("#ec-save").textContent = "保存中…";
+ try {
+ const r = await API.post("/character/update", body);
+ hideModal();
+ showToast(`✅ ${c.name} 人设已更新（${r.updated_fields.length} 个字段）`, "success");
+ addLog("done", `[character] ${c.name} 人设更新: ${r.updated_fields.join(", ")}`);
+ showToast("提示：已写章节可能需要检查一致性（跑全本扫描）", "info", 5000);
+ refreshAll();
+ if (CURRENT.target === "characters") showCharacterDetail(c.id);
+ } catch (e) {
+ toastError("保存失败", e);
+ $("#ec-save").disabled = false;
+ $("#ec-save").textContent = "保存";
+ }
+ };
 }
 
 function setMbtiDialog(c) {

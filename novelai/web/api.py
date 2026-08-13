@@ -727,6 +727,42 @@ def api_set_status(req: dict) -> dict:
     return {"ok": True, "name": name, "status": status}
 
 
+# 可通过 /character/update 编辑的人设字段白名单
+_CHARACTER_EDITABLE_FIELDS = (
+    "basic_info", "personality", "speech_style", "abilities",
+    "arc", "enneagram", "arc_type", "aliases",
+)
+
+
+@router.post("/character/update")
+def api_character_update(req: dict) -> dict:
+    """编辑角色人设核心字段（基础信息/性格/说话风格/能力/弧光/别名等）。
+    底层 kb.update_character 支持任意字段，此处白名单限制可改范围。
+    """
+    char_id = _safe_int(req.get("char_id") or req.get("id"), 0)
+    if char_id < 1:
+        raise HTTPException(400, "char_id required")
+    db = get_db()
+    c = kb.get_character(db, char_id)
+    if not c:
+        raise HTTPException(404, f"character not found: {char_id}")
+    updates = {}
+    for field in _CHARACTER_EDITABLE_FIELDS:
+        if field in req and req[field] is not None:
+            val = str(req[field]).strip()
+            if field == "aliases":
+                # aliases 存为 JSON 数组；接受逗号分隔字符串
+                parts = [a.strip() for a in val.replace("，", ",").split(",") if a.strip()]
+                updates[field] = parts
+            else:
+                updates[field] = val
+    if not updates:
+        raise HTTPException(400, "没有可更新的字段")
+    kb.update_character(db, char_id, **updates)
+    retriever.invalidate_cache()
+    return {"ok": True, "id": char_id, "updated_fields": list(updates.keys())}
+
+
 @router.get("/character/{char_id}/profile")
 def api_character_profile(char_id: int = ApiPath(ge=1, description="人物 ID")) -> dict:
     """人物小传聚合端点：基础档案 + 事件时间线 + 里程碑 + 关系演变 + 相关伏笔。

@@ -617,10 +617,8 @@ async function renderDashboard(opts = {}) {
  <button class="btn primary" onclick="goto('new-novel')" style="background:linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--bg-base)));color:var(--accent-text);font-weight:600;padding:10px 24px;font-size:14px">
  开始写新小说（AI 辅助创作）
  </button>
- <button class="btn" onclick="loadSampleProject()"> 加载示例项目</button>
  <button class="btn" onclick="goto('import')"> 导入 .md 手稿</button>
  </div>
- <div style="margin-top:10px;font-size:11px;color:var(--fg-dim)"> 示例项目：3 章"长安遗事"+ 4 角色 + 5 事件 + 已跑一致性</div>
  </div>
  `;
  } else {
@@ -6829,39 +6827,6 @@ async function importNovelpack() {
  _importingPack = false;
  }
 }
-
-
-// =================== 一键加载示例项目 ===================
-let _loadingSample = false; // B-新93: 防用户连点导致多次 POST /system/load-sample (后端已二次拒, 但避免冗余请求)
-async function loadSampleProject() {
- if (_loadingSample) return; // 已有在跑
- if (!(await showConfirm('加载示例项目《长安遗事》(3 章 + 4 角色 + 5 事件)?\n\n这会立即填充数据库, 让你不用准备手稿就能看到完整编辑界面.\n\n如果项目已有章节, 会拒绝执行 (先清理数据再试).'))) return;
- _loadingSample = true;
- addLog("info", "[sample] 加载示例项目…");
- try {
- const r = await API.post("/system/load-sample", {});
- // C3: API.post 已 fetch 完, r 就是 JSON. 后端 ok=true 时是 {ok:true, created:{...}, first_chapter:1}
- // 不是 HTTP Response, 不要 r.ok (HTTP 字段)
- if (!r || r.ok !== true) {
- const errMsg = (r && (r.error || r.message)) || "未知错误";
- showToast("⚠ " + errMsg, "error", 6000);
- addLog("error", `[sample] ${errMsg}`);
- return;
- }
- addLog("done", `[sample] 示例项目已加载 (${r.created.chapters} 章 / ${r.created.characters} 角色 / ${r.created.events} 事件)`);
- try { localStorage.setItem("novelai:onboarding-done", "1"); } catch (e) {}
- await refreshAll();
- setTimeout(() => {
- gotoEditorAndLoad(r.first_chapter || 1);
- }, 500);
- } catch (e) {
- toastError("加载失败", e);
- addLog("error", `[sample] ${e.message || e}`);
- } finally {
- _loadingSample = false;
- }
-}
-
 
 // =================== 跨章节用词一致性 ===================
 async function showVocabModal() {

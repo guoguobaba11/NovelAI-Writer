@@ -1236,17 +1236,26 @@ function updateWriteSection() {
  }
  const target = parseInt(localStorage.getItem("novelai:default-target-words") || "0") || 0;
  const wordsTip = target ? `（每章目标 ${(target/1000).toFixed(target%1000?1:0)} 千字）` : "";
+ // 默认 to 跟随大纲实际章数
+ const outlineCount = (_nnOutlineData && _nnOutlineData.count) ||
+ document.querySelectorAll("#nn-outline-result .nn-card").length || 5;
+ const defaultTo = Math.min(Math.max(outlineCount, 1), 10); // 默认最多前10章
  $("#nn-write-section").innerHTML = `
  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
  <button class="btn primary" onclick="writeFirstChapter()">AI 写第 1 章 ${wordsTip}</button>
- <span style="color:var(--fg-muted);font-size:11px">单章约 30-90 秒，完成后自动跳转编辑器</span>
+ <span style="color:var(--fg-muted);font-size:11px">推荐：逐章写，实时流式展示，约 1-2 分钟</span>
  </div>
- <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
- <span style="font-size:12px;color:var(--fg-muted)">或批量生成：</span>
- <input type="number" id="nn-batch-from" value="1" min="1" class="nn-input" style="width:60px">
+ <div style="margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px">
+ <div style="font-size:12px;color:var(--fg-muted);margin-bottom:6px">或批量生成（逐章串行，实时看到每章正文，可随时取消）：</div>
+ <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+ <span style="font-size:12px">第</span>
+ <input type="number" id="nn-batch-from" value="1" min="1" class="nn-input" style="width:50px">
  <span style="font-size:12px">到</span>
- <input type="number" id="nn-batch-to" value="5" min="1" class="nn-input" style="width:60px">
- <button class="btn" onclick="batchGenerate()">批量生成</button>
+ <input type="number" id="nn-batch-to" value="${defaultTo}" min="1" max="${outlineCount}" class="nn-input" style="width:50px">
+ <span style="font-size:12px">章</span>
+ <button class="btn" onclick="batchGenerate()">开始批量生成</button>
+ <span style="font-size:11px;color:var(--fg-dim)">共 ${outlineCount} 章大纲</span>
+ </div>
  </div>
  `;
 }
@@ -1259,14 +1268,39 @@ async function writeFirstChapter() {
  } catch (e) { toastError("启动写章失败", e); }
 }
 
+// 批量写章状态（前端逐章串行，不再走后端异步线程）
+let _batchWrite = null; // {active, from, to, current, aborted}
+
 async function batchGenerate() {
  const fromIdx = parseInt($("#nn-batch-from").value) || 1;
  const toIdx = parseInt($("#nn-batch-to").value) || 5;
+ if (fromIdx > toIdx) { showToast("起始章不能大于结束章", "error"); return; }
+ const count = toIdx - fromIdx + 1;
+ _batchWrite = {active: true, from: fromIdx, to: toIdx, current: fromIdx, aborted: false};
+ showToast(`开始逐章生成第 ${fromIdx}-${toIdx} 章（共 ${count} 章，每章约 1-2 分钟）…`);
+ goto("editor");
+ for (let idx = fromIdx; idx <= toIdx; idx++) {
+ if (_batchWrite.aborted) break;
+ _batchWrite.current = idx;
  try {
- showToast(`开始批量生成第 ${fromIdx}-${toIdx} 章…`);
- await API.post("/book/generate", {from_idx: fromIdx, to_idx: toIdx, target_words: _getChapterTargetWords(fromIdx)});
- goto("pipeline");
- } catch (e) { toastError("批量生成失败", e); }
+ await streamWriteChapter(idx);
+ } catch (e) {
+ addLog("error", `[batch] 第${idx}章失败: ${e.message||e}`);
+ // 单章失败不中断整体，继续下一章
+ }
+ if (idx < toIdx && !_batchWrite.aborted) {
+ await new Promise(r => setTimeout(r, 1500)); // 章间间隔，让用户看清结果
+ }
+ }
+ const doneCount = (_batchWrite.aborted ? _batchWrite.current : toIdx) - fromIdx + 1;
+ const wasAborted = _batchWrite.aborted;
+ _batchWrite.active = false;
+ if (wasAborted) {
+ showToast(`已取消，完成了第 ${fromIdx}-${fromIdx + doneCount - 1} 章`, "warn");
+ } else {
+ showToast(`✅ 批量完成：第 ${fromIdx}-${toIdx} 章全部生成`, "success", 5000);
+ }
+ _batchWrite = null;
 }
 
 // =================== 导入 ===================
@@ -2115,11 +2149,27 @@ async function streamWriteChapter(idx) {
  showToast(`第 ${idx} 章写完了（${evt.word_count} 字）`);
  // 完成后显示操作按钮
  const actions = document.createElement("div");
- actions.style.cssText = "margin-top:8px;display:flex;gap:8px;flex-wrap:wrap";
- actions.innerHTML = `<button class="btn small primary" onclick="loadEditorChapter(${idx});document.getElementById('ed-tab-ai')?.click()">查看本章</button>`;
+ actions.style.cssText = "margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center";
+ if (_batchWrite && _batchWrite.active) {
+ // 批量模式：显示进度 + 取消
+ const done = idx - _batchWrite.from + 1;
+ const total = _batchWrite.to - _batchWrite.from + 1;
+ if (idx < _batchWrite.to && !_batchWrite.aborted) {
+ actions.innerHTML = `
+ <span style="color:var(--fg-muted);font-size:12px">📊 批量进度 ${done}/${total} · 正在准备第 ${idx+1} 章…</span>
+ <button class="btn small" onclick="_batchWrite.aborted=true;this.style.display='none'">取消剩余</button>`;
+ } else {
+ actions.innerHTML = `<span style="color:var(--success);font-size:12px">✅ 批量完成 ${done}/${total} 章</span>`;
+ }
+ } else {
+ // 非批量：加"写下一章"引导
+ actions.innerHTML = `
+ <button class="btn small primary" onclick="loadEditorChapter(${idx});document.getElementById('ed-tab-ai')?.click()">查看本章</button>
+ <button class="btn small" onclick="writeNextChapter(${idx+1})">写第 ${idx+1} 章 →</button>`;
+ }
  stream.appendChild(actions);
- // 自动刷新编辑器加载新内容
- setTimeout(() => loadEditorChapter(idx), 800);
+ // 自动刷新编辑器加载新内容 + 更新章节列表
+ setTimeout(() => { loadEditorChapter(idx); renderEditorChapterList(); }, 800);
  } else if (evt.error) {
  prog.innerHTML = `<span class="spinner" style="border-top-color:var(--danger)"></span> <span style="color:var(--danger)">错误：${ESC(evt.error)}</span>`;
  // 错误时显示重试按钮

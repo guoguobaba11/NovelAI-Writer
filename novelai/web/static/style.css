@@ -1923,7 +1923,7 @@ textarea.nn-input { resize: vertical; }
    用户可以分别点左/右侧边图标条展开对应面板 */
 .editor-layout {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 320px;
+  grid-template-columns: 40px minmax(0, 1fr) minmax(320px, 1fr);
   grid-template-rows: auto 1fr 0;   /* 顶条auto(允许换行增高) / 主区1fr / 底栏0 */
   gap: 0;
   height: 100%;
@@ -1948,7 +1948,7 @@ body.editor-compact .editor-right { display: none; }
 
 /* 左侧面板展开态 (ed-left 内部按钮触发) */
 body.left-open .editor-layout {
-  grid-template-columns: 240px 1fr 320px;
+  grid-template-columns: 240px minmax(0, 1fr) minmax(320px, 1fr);
 }
 body.editor-compact.left-open .editor-layout {
   grid-template-columns: 240px 1fr 0;
@@ -2233,7 +2233,7 @@ body.right-collapsed.focus-mode .editor-layout {
   min-height: 0;
 }
 .editor-page {
-  max-width: min(70vw, 920px);
+  max-width: min(52vw, 760px);
   margin: 0 auto;
   padding: 28px 40px 40px;
   transition: max-width 0.25s ease;
@@ -2284,16 +2284,16 @@ body.font-tier-22 #ed-text { font-size: 22px; line-height: 1.85; }
 body.font-tier-24 #ed-text { font-size: 24px; line-height: 1.85; }
 body.font-tier-28 #ed-text { font-size: 28px; line-height: 2.1; }
 
-/* 字号档位同步到 AI 输出区（比正文小 ~3-4px，保持视觉层级但不至于太小）
+/* 字号档位同步到 AI 输出区（与正文一致，保持阅读体验统一）
    --ai-font-size 驱动 .ed-bubble-ai / .epc-body / .epc-diff-content */
-body { --ai-font-size: 15px; }
-body.font-tier-14 { --ai-font-size: 13px; }
-body.font-tier-16 { --ai-font-size: 14px; }
-body.font-tier-18 { --ai-font-size: 15px; }
-body.font-tier-20 { --ai-font-size: 15px; }
-body.font-tier-22 { --ai-font-size: 18px; }
-body.font-tier-24 { --ai-font-size: 18px; }
-body.font-tier-28 { --ai-font-size: 20px; }
+body { --ai-font-size: 17px; }
+body.font-tier-14 { --ai-font-size: 14px; }
+body.font-tier-16 { --ai-font-size: 16px; }
+body.font-tier-18 { --ai-font-size: 17px; }
+body.font-tier-20 { --ai-font-size: 18px; }
+body.font-tier-22 { --ai-font-size: 20px; }
+body.font-tier-24 { --ai-font-size: 22px; }
+body.font-tier-28 { --ai-font-size: 24px; }
 .ed-bubble-ai { font-size: var(--ai-font-size); line-height: 1.8; }
 .epc-body { font-size: var(--ai-font-size); }
 /* v1.19.25: 字号大时不再粗暴收窄 page, 改为限最大可读宽度 (中文 50 字/行 最佳) */
@@ -2488,9 +2488,10 @@ body.left-open .editor-left .ed-left-rail .ed-rail-btn { width: auto; padding: 0
   background: var(--bg-glass);
   border: 1px solid var(--border);
   color: var(--fg);
-  padding: 7px 11px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-family: var(--font-serif);
+  font-size: 15px;
   outline: none;
   min-width: 0;
 }
@@ -2753,8 +2754,8 @@ body.editor-compact .ed-toggle-right { background: transparent; color: var(--fg-
 .epc-num { font-weight: 500; }
 .epc-body {
   padding: 10px 14px;
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--ai-font-size);
+  line-height: 1.8;
   color: var(--fg);
   white-space: pre-wrap;
   max-height: 240px;

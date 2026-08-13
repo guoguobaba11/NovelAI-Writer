@@ -1993,11 +1993,18 @@ async function loadEditorChapter(idx) {
  if (r.consistency && r.consistency.issues && r.consistency.issues.length) {
  issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:11px">上次扫描: ${r.consistency.issues.length} 个问题</div>`;
  r.consistency.issues.forEach(it => {
+ const fix = it.fix_suggestion || it.explanation || "";
  issuesEl.insertAdjacentHTML("beforeend",
  `<div class="ed-issue-mini ${it.severity||'low'}">
- <div class="eim-title">${ESC(it.explanation ? it.explanation.slice(0, 50) : it.category || '问题')}</div>
- <div class="eim-meta">[${it.severity||'low'}] ${ESC(it.category || '')}</div>
+ <div class="eim-title">${ESC(it.explanation ? it.explanation.slice(0, 80) : it.category || '问题')}</div>
+ <div class="eim-meta">[${it.severity||'low'}] ${ESC(it.category || '')} ${fix ? `· <a class="eim-fix" data-fix="${encodeURIComponent(fix.slice(0,300))}" style="color:var(--accent);cursor:pointer;font-size:11px">AI 修复 →</a>` : ""}</div>
  </div>`);
+ });
+ issuesEl.querySelectorAll(".eim-fix").forEach(a => {
+ a.onclick = () => {
+ _pendingAiPrompt = `修复本章一致性问题：\n${decodeURIComponent(a.dataset.fix || "")}`;
+ _applyPendingAiPrompt();
+ };
  });
  } else if (r.threads && r.threads.length) {
  issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:11px">本章衔接 ${r.threads.length} 条线</div>`;
@@ -2626,11 +2633,20 @@ async function editorAnalyze() {
  issuesEl.innerHTML += '<p style="color:var(--success);font-size:11px">✓ 无问题</p>';
  } else {
  r.issues.forEach(it => {
+ const fix = it.fix_suggestion || it.explanation || "";
  issuesEl.insertAdjacentHTML("beforeend",
  `<div class="ed-issue-mini ${it.severity||'low'}">
- <div class="eim-title">${ESC((it.explanation || '').slice(0, 50))}</div>
- <div class="eim-meta">[${it.severity||'low'}] ${ESC(it.category || '')}</div>
+ <div class="eim-title">${ESC((it.explanation || '').slice(0, 80))}</div>
+ <div class="eim-meta">[${it.severity||'low'}] ${ESC(it.category || '')} ${fix ? `· <a class="eim-fix" data-fix="${encodeURIComponent(fix.slice(0,300))}" style="color:var(--accent);cursor:pointer;font-size:11px">AI 修复 →</a>` : ""}</div>
  </div>`);
+ });
+ // AI 修复链接：预填指令框
+ issuesEl.querySelectorAll(".eim-fix").forEach(a => {
+ a.onclick = () => {
+ const fixText = decodeURIComponent(a.dataset.fix || "");
+ _pendingAiPrompt = `修复本章一致性问题：\n${fixText}`;
+ _applyPendingAiPrompt();
+ };
  });
  }
  } catch (e) {
@@ -4441,9 +4457,12 @@ function renderRoadmap(items, total) {
  for (const it of items) {
  const sevMark = {high: "●", medium: "●", low: "●"}[it.severity] || "○";
  const chRef = it.chapter_ref ? `第 ${it.chapter_ref} 章` : "全局";
- html += `<div class="issue-card ${it.severity}">
+ const clickable = it.chapter_ref ? `issue-card-clickable` : "";
+ const dataAttr = it.chapter_ref ? `data-chapter-idx="${it.chapter_ref}" data-fix-suggestion="${encodeURIComponent(it.fix_suggestion || '')}" data-issue-title="${encodeURIComponent(it.title || '')}"` : "";
+ const hint = it.chapter_ref ? `<span style="float:right;font-size:10px;color:var(--accent)">点击用 AI 修复 →</span>` : "";
+ html += `<div class="issue-card ${it.severity} ${clickable}" ${dataAttr}>
  <div class="head">
- <div class="left">#${it.rank} ${sevMark} <span style="color:var(--fg-muted);font-size:11px">[${chRef}]</span> ${ESC(it.category)} · ${ESC(it.type)}</div>
+ <div class="left">#${it.rank} ${sevMark} <span style="color:var(--fg-muted);font-size:11px">[${chRef}]</span> ${ESC(it.category)} · ${ESC(it.type)} ${hint}</div>
  <div class="meta">score=${it.score}</div>
  </div>
  <div class="body" style="font-weight:600;color:var(--fg);margin-bottom:4px">${ESC(it.title)}</div>
@@ -4766,7 +4785,7 @@ function renderThreadScanResultHTML(issues) {
  for (const it of issues) {
  const chIdx = it.chapter_idx || it.planted_chapter || it.resolved_chapter;
  const clickable = chIdx ? `issue-card-clickable` : '';
- const dataAttr = chIdx ? `data-chapter-idx="${chIdx}"` : '';
+ const dataAttr = chIdx ? `data-chapter-idx="${chIdx}" data-fix-suggestion="${encodeURIComponent(it.fix_suggestion || '')}" data-issue-title="${encodeURIComponent(it.title || '')}"` : '';
  html += `<div class="issue-card ${it.severity} ${clickable}" ${dataAttr}>
  <div class="head">
  <div class="left">${ESC(it.title || "")}</div>
@@ -4805,7 +4824,7 @@ function renderLogicScanResultHTML(data) {
  for (const it of arr) {
  const chIdx = it.chapter_idx;
  const clickable = chIdx ? `issue-card-clickable` : '';
- const dataAttr = chIdx ? `data-chapter-idx="${chIdx}"` : '';
+ const dataAttr = chIdx ? `data-chapter-idx="${chIdx}" data-fix-suggestion="${encodeURIComponent(it.fix_suggestion || '')}" data-issue-title="${encodeURIComponent(it.title || '')}"` : '';
  html += `<div class="issue-card ${it.severity} ${clickable}" ${dataAttr}>
  <div class="head">
  <div class="left">${label}</div>
@@ -4843,7 +4862,7 @@ function renderStyleScanResultHTML(data) {
  for (const it of issues) {
  const chIdx = it.chapter_idx;
  const clickable = chIdx ? `issue-card-clickable` : '';
- const dataAttr = chIdx ? `data-chapter-idx="${chIdx}"` : '';
+ const dataAttr = chIdx ? `data-chapter-idx="${chIdx}" data-fix-suggestion="${encodeURIComponent(it.fix_suggestion || '')}" data-issue-title="${encodeURIComponent(it.title || '')}"` : '';
  html += `<div class="issue-card ${it.severity} ${clickable}" ${dataAttr}>
  <div class="head">
  <div class="left">第${chIdx}章 ${ESC(it.dimension || "")}</div>
@@ -4955,12 +4974,29 @@ function _sugCard(s) {
  <div style="color:var(--fg-muted);font-size:11px;margin-bottom:4px">${s.target_label ? "目标: " + ESC(s.target_label) : ""} ${s.chapter_focus ? " · 范围: " + ESC(s.chapter_focus) : ""}</div>
  <div class="opt-content">${ESC(s.content || "")}</div>
  ${s.evidence ? `<div class="opt-evidence"><b>依据：</b>${ESC(s.evidence)}</div>` : ""}
- ${s.status === "open" ? `<div class="opt-actions"><button class="btn small primary" data-act="apply" data-id="${s.id}">✓ 已应用</button><button class="btn small" data-act="dismiss" data-id="${s.id}">✕ 忽略</button></div>` : ""}
+ ${s.status === "open" ? `<div class="opt-actions">
+ <button class="btn small" data-act="ai-fix" data-id="${s.id}"> 用 AI 修改</button>
+ <button class="btn small primary" data-act="apply" data-id="${s.id}">✓ 已应用</button>
+ <button class="btn small" data-act="dismiss" data-id="${s.id}">✕ 忽略</button>
+ </div>` : ""}
  `;
  card.querySelectorAll("[data-act]").forEach(btn => {
  btn.onclick = async () => {
+ const act = btn.dataset.act;
+ if (act === "ai-fix") {
+ // 把建议内容预填到编辑器 AI 指令框
+ const chIdx = s.chapter_focus ? parseInt(String(s.chapter_focus).replace(/\D/g, "")) : null;
+ _pendingAiPrompt = `根据优化建议修改：\n${s.content || s.title || ""}`;
+ if (chIdx && chIdx > 0) {
+ gotoEditorAndLoad(chIdx);
+ } else {
+ goto("editor");
+ _applyPendingAiPrompt();
+ }
+ return;
+ }
  try {
- await API.post(`/suggestion/${btn.dataset.act}/${btn.dataset.id}`);
+ await API.post(`/suggestion/${act}/${btn.dataset.id}`);
  loadSugList();
  } catch (e) {
  addLog("error", `[suggestion] 操作失败: ${e.message || e}`);
@@ -8217,7 +8253,7 @@ window.addEventListener("DOMContentLoaded", () => {
  // 窗口 resize
  window.addEventListener("resize", () => Object.values(_charts).forEach(c => c && c.resize()));
 
- // 问题卡片点击 → 跳到对应章节编辑器
+ // 问题卡片点击 → 跳到对应章节编辑器 + 预填诊断建议为 AI 指令
  document.addEventListener("click", (e) => {
  const card = e.target.closest(".issue-card-clickable");
  if (!card) return;
@@ -8225,10 +8261,19 @@ window.addEventListener("DOMContentLoaded", () => {
  if (!isNaN(chIdx) && chIdx > 0) {
  e.preventDefault();
  e.stopPropagation();
- STATE_EDITOR.chapterIdx = chIdx; // v1.19.26: 统一字段 (之前用 idx, 导致 Ctrl+S 误判无 chapter)
+ // 复用 review 的 _pendingAiPrompt 机制：把诊断建议预填到 AI 指令框
+ const fix = card.dataset.fixSuggestion ? decodeURIComponent(card.dataset.fixSuggestion) : "";
+ const title = card.dataset.issueTitle ? decodeURIComponent(card.dataset.issueTitle) : "";
+ if (fix || title) {
+ const parts = [];
+ if (title) parts.push(`问题：${title}`);
+ if (fix) parts.push(`修改方向：${fix}`);
+ _pendingAiPrompt = `根据诊断发现的问题修改本章：\n${parts.join("\n")}`;
+ }
+ STATE_EDITOR.chapterIdx = chIdx;
  saveLastChapter(chIdx, 0);
- addLog("info", `[nav] 跳到第 ${chIdx} 章`);
- goto("editor");
+ addLog("info", `[nav] 跳到第 ${chIdx} 章${fix ? "（已预填修改建议）" : ""}`);
+ gotoEditorAndLoad(chIdx);
  }
  });
 

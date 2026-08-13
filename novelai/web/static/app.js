@@ -1276,7 +1276,8 @@ async function batchGenerate() {
  const count = toIdx - fromIdx + 1;
  _batchWrite = {active: true, from: fromIdx, to: toIdx, current: fromIdx, aborted: false};
  showToast(`开始逐章生成第 ${fromIdx}-${toIdx} 章（共 ${count} 章，每章约 1-2 分钟）…`);
- goto("editor");
+ // 不自己 goto("editor")：让 streamWriteChapter 统一处理视图切换 + 等待 renderEditor
+ // 避免 batchGenerate 的 goto 和 streamWriteChapter 的 DOM 操作并发竞争
  for (let idx = fromIdx; idx <= toIdx; idx++) {
  if (_batchWrite.aborted) break;
  _batchWrite.current = idx;
@@ -2071,7 +2072,13 @@ async function writeNextChapter(newIdx) {
 // SSE 流式写章：在编辑器 AI 面板实时展示 AI 正在写的正文
 async function streamWriteChapter(idx) {
  // 确保在编辑器视图
- if (CURRENT.target !== "editor") goto("editor");
+ if (CURRENT.target !== "editor") {
+ goto("editor");
+ // goto 触发 renderEditor()(async, 不被 goto await)，
+ // renderEditor 的 loadEditorChapter 会覆盖 #ed-ai-stream 内容,
+ // 必须等它完成后再写自己的气泡, 否则并发竞争导致写章过程被覆盖
+ await new Promise(r => setTimeout(r, 500));
+ }
  // 切到 AI tab
  const aiTab = Array.from(document.querySelectorAll(".ed-tab")).find(t => t.textContent.includes("AI"));
  if (aiTab) aiTab.click();

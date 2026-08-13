@@ -3064,6 +3064,31 @@ async function sendEditInstruction(instruction) {
  STATE_EDITOR.lastAiText = aiText;
  }
  $("#ed-ai-actions").style.display = "flex";
+ // 本次修改增减字数 + 全文对比入口
+ const _oldText = STATE_EDITOR.savedText || "";
+ if (_oldText && _oldText.trim() && _oldText !== aiText && stream) {
+ try {
+ const [dr] = await batchDiff([{idx:0, oldText:_oldText, newText:aiText}]);
+ if (dr) {
+ const summary = document.createElement("div");
+ summary.className = "ed-ai-diff-summary";
+ summary.innerHTML = `<span style="font-size:12px;color:var(--fg-muted)">本次修改：<span style="color:var(--danger)">−${dr.del}字</span> <span style="color:var(--success)">+${dr.ins}字</span> · 净${dr.ins-dr.del>=0?"+":""}${dr.ins-dr.del}字</span> <button class="btn small" id="ed-ai-fulldiff" style="font-size:11px;margin-left:8px">📊 全文对比</button>`;
+ stream.insertBefore(summary, stream.firstChild);
+ const fdBtn = $("#ed-ai-fulldiff");
+ if (fdBtn) fdBtn.onclick = async () => {
+ let panel = $("#ed-ai-fulldiff-panel");
+ if (panel) { panel.style.display = panel.style.display === "none" ? "" : "none"; return; }
+ panel = document.createElement("div");
+ panel.id = "ed-ai-fulldiff-panel";
+ panel.style.cssText = "margin:6px 0;padding:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;max-height:50vh;overflow-y:auto;font-size:13px;line-height:1.9;font-family:var(--font-serif)";
+ panel.innerHTML = '<span style="color:var(--fg-muted)">计算中…</span>';
+ summary.after(panel);
+ const [dr2] = await batchDiff([{idx:0, oldText:_oldText, newText:aiText}]);
+ panel.innerHTML = dr2 && dr2.html ? dr2.html : '<span style="color:var(--danger)">对比计算失败</span>';
+ };
+ }
+ } catch(e) { addLog("warn", "[ai-diff] 全文对比计算异常: " + (e.message||e)); }
+ }
  const logMsg = data.report
  ? `修复 ${data.report.delta.fixed} 个 · ${data.report.delta.introduced > 0 ? '引入 ' + data.report.delta.introduced + ' 个' : ''}`
  : `完成`;
@@ -3953,6 +3978,13 @@ async function refreshAiStatsbar() {
  if (callsEl) callsEl.textContent = today.calls || 0;
  if (tokensEl) tokensEl.textContent = formatTokens(today.total_tokens || 0);
  if (latencyEl) latencyEl.textContent = today.avg_latency_ms ? Math.round(today.avg_latency_ms) : "—";
+ // tokens/s: 用 total_tokens / avg_latency_ms 估算吞吐量
+ const tpsEl = $("#asb-tps");
+ if (tpsEl) {
+ const tps = (today.total_tokens && today.avg_latency_ms > 0)
+ ? Math.round(today.total_tokens / (today.avg_latency_ms / 1000)) : 0;
+ tpsEl.textContent = tps > 0 ? tps : "—";
+ }
  if (rateEl) rateEl.textContent = formatAcceptRate();
  // 详情区（展开时才填充）
  const det = $("#ed-ai-statsbar-detail");

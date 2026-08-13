@@ -1062,6 +1062,7 @@ function renderNewNovel() {
  const _progTimer = setInterval(_paintProgress, 1000);
  try {
  statusEl.textContent = target > 20 ? `分批生成中（${target} 章，每批 20 章）…` : "AI 生成中…";
+ addLog("info", `[outline] 开始生成大纲（${target} 章${target > 20 ? "，分批" : ""}）`);
  renderProgress(0, 1, "准备中…");
  const resp = await fetch("/api/outline/generate-stream", {
  method: "POST",
@@ -1101,6 +1102,7 @@ function renderNewNovel() {
  renderOutlineResult(result);
  statusEl.textContent = `生成 ${result.count} 章`;
  barEl.innerHTML = `<div style="font-size:11px;color:var(--success)">✅ 完成，共 ${result.count} 章（${Math.round((Date.now()-t0)/1000)}s）</div>`;
+ addLog("done", `[outline] 大纲生成完成：${result.count} 章（${Math.round((Date.now()-t0)/1000)}s）`);
  _nnStep = 3;
  _nnRenderStep();
  } catch (e) {
@@ -1291,6 +1293,7 @@ async function batchGenerate() {
  const count = toIdx - fromIdx + 1;
  _batchWrite = {active: true, from: fromIdx, to: toIdx, current: fromIdx, aborted: false};
  showToast(`开始逐章生成第 ${fromIdx}-${toIdx} 章（共 ${count} 章，每章约 1-2 分钟）…`);
+ addLog("info", `[batch] 开始批量生成第 ${fromIdx}-${toIdx} 章（${count} 章）`);
  // 不自己 goto("editor")：让 streamWriteChapter 统一处理视图切换 + 等待 renderEditor
  // 避免 batchGenerate 的 goto 和 streamWriteChapter 的 DOM 操作并发竞争
  for (let idx = fromIdx; idx <= toIdx; idx++) {
@@ -1311,8 +1314,10 @@ async function batchGenerate() {
  _batchWrite.active = false;
  if (wasAborted) {
  showToast(`已取消，完成了第 ${fromIdx}-${fromIdx + doneCount - 1} 章`, "warn");
+ addLog("warn", `[batch] 用户取消，完成第 ${fromIdx}-${fromIdx+doneCount-1} 章（${doneCount}/${toIdx-fromIdx+1}）`);
  } else {
  showToast(`✅ 批量完成：第 ${fromIdx}-${toIdx} 章全部生成`, "success", 5000);
+ addLog("done", `[batch] 批量完成：第 ${fromIdx}-${toIdx} 章（${toIdx-fromIdx+1} 章）`);
  }
  _batchWrite = null;
 }
@@ -2160,6 +2165,7 @@ async function streamWriteChapter(idx) {
  // 防 AI 并发：已有 AI 任务在跑时拒绝
  if (_aiStreaming) { showToast("AI 正在运行，请等待完成", "warning"); return; }
  _aiStreaming = true;
+ addLog("info", `[write] 开始写第 ${idx} 章…`);
  // 切到 AI tab
  const aiTab = Array.from(document.querySelectorAll(".ed-tab")).find(t => t.textContent.includes("AI"));
  if (aiTab) aiTab.click();
@@ -2233,6 +2239,7 @@ async function streamWriteChapter(idx) {
  prog.textContent = `完成！${evt.word_count} 字，一致性重试 ${evt.retries || 0} 次`;
  prog.style.color = "var(--success)";
  showToast(`第 ${idx} 章写完了（${evt.word_count} 字）`);
+ addLog("done", `[write] 第 ${idx} 章完成（${evt.word_count} 字，重试 ${evt.retries || 0} 次）`);
  // 完成后显示操作按钮
  const actions = document.createElement("div");
  actions.style.cssText = "margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center";
@@ -2692,6 +2699,7 @@ async function editorAnalyze() {
  if (!idx) return;
  if (_analyzingInFlight) { addLog("warn", "[editor] 扫描中, 请稍等"); return; }
  _analyzingInFlight = true;
+ addLog("info", `[scan] 一致性扫描第 ${idx} 章…`);
  const text = $("#ed-text").value;
  const issuesEl = $("#ed-issues");
  issuesEl.innerHTML = '<p style="color:var(--fg-muted);font-size:11px">扫描中…</p>';
@@ -2700,6 +2708,7 @@ async function editorAnalyze() {
  const sev = r.by_severity || {}; // E1: 后端漏返 by_severity 不再抛
  const high = sev.high || 0, med = sev.medium || 0, low = sev.low || 0;
  issuesEl.innerHTML = `<div style="margin-bottom:6px;color:var(--fg-muted);font-size:11px">扫描结果：●${high} ●${med} ●${low}</div>`;
+ addLog("done", `[scan] 第 ${idx} 章扫描完成：${high+med+low} 个问题（high ${high} / med ${med} / low ${low}）`);
  if (!r.issues.length) {
  issuesEl.innerHTML += '<p style="color:var(--success);font-size:11px">✓ 无问题</p>';
  } else {
@@ -2913,6 +2922,7 @@ async function sendEditInstruction(instruction) {
  _lastAiInstruction = instruction; // 记住本次指令，供"重试"按钮复用
  _lastAiSelection = effectiveSelection; // 记住是否 inline 模式
  _aiStreaming = true;
+ addLog("info", `[ai-edit] 开始修改第 ${idx} 章：${instruction.slice(0, 40)}${instruction.length > 40 ? "…" : ""}`);
  setToolbarBusy(true); // 工具栏状态区切蓝点脉冲
  // 显示用户指令气泡
  const stream = $("#ed-ai-stream");
@@ -7677,6 +7687,21 @@ function addLog(stage, msg) {
  el.appendChild(frag);
  el.scrollTop = el.scrollHeight;
  while (el.children.length > 200) el.removeChild(el.firstChild);
+ // 折叠时给按钮加"新日志"提示(红点+计数)
+ const logbar = document.getElementById("logbar");
+ if (logbar && logbar.classList.contains("collapsed")) {
+ const btn = document.getElementById("btn-toggle-log");
+ if (btn) {
+ const badge = btn.querySelector(".log-badge") || (() => {
+ const b = document.createElement("span");
+ b.className = "log-badge";
+ b.style.cssText = "background:var(--danger);color:#fff;font-size:9px;padding:1px 5px;border-radius:8px;margin-left:4px;font-weight:600";
+ btn.appendChild(b);
+ return b;
+ })();
+ badge.textContent = (parseInt(badge.textContent) || 0) + _logQueue.length + 1;
+ }
+ }
  });
 }
 
@@ -8015,7 +8040,13 @@ window.addEventListener("DOMContentLoaded", () => {
  // log 折叠
  $("#btn-toggle-log").onclick = () => {
  $("#logbar").classList.toggle("collapsed");
- $("#btn-toggle-log").textContent = $("#logbar").classList.contains("collapsed") ? "展开" : "收起";
+ const collapsed = $("#logbar").classList.contains("collapsed");
+ $("#btn-toggle-log").textContent = collapsed ? "展开" : "收起";
+ // 展开时清除红点
+ if (!collapsed) {
+ const badge = $("#btn-toggle-log .log-badge");
+ if (badge) badge.remove();
+ }
  };
  // Onboarding 控件
  $("#onb-prev").onclick = () => { if (_onbStep > 1) { _onbStep--; updateOnbStep(); } };

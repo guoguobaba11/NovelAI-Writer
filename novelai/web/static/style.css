@@ -55,7 +55,7 @@
 
   /* 字体（Apple SF Pro 优先 + 中文苹方/雅黑） */
   --font-sans: -apple-system, "SF Pro Display", "SF Pro Text", BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", "微软雅黑", "Segoe UI", "Source Han Sans CN", sans-serif;
-  --font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", "SimSun", "宋体", Georgia, serif;
+  --font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", "PingFang SC", "Microsoft YaHei", Georgia, serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
 
   /* 圆角 —— Apple 风（加大，圆润感） */
@@ -2233,11 +2233,15 @@ body.right-collapsed.focus-mode .editor-layout {
   min-height: 0;
 }
 .editor-page {
-  max-width: min(52vw, 760px);
-  margin: 0 auto;
-  padding: 28px 40px 40px;
+  max-width: min(56vw, 800px);
+  margin: 16px auto;
+  padding: 36px 48px 48px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.04);
   transition: max-width 0.25s ease;
-  min-height: 100%;
+  min-height: calc(100% - 32px);
   display: flex;
   flex-direction: column;
 }
@@ -2264,13 +2268,13 @@ body.focus-mode.font-tier-28 .editor-page { max-width: min(72vw, 980px); }
   color: var(--fg);
   /* 正文衬线字体：与全局 --font-serif 对齐（宋体优先），回退也用宋体栈保持一致。
      如需楷体/书法感，应由用户在设置里主动切换字体变量，而非藏在回退里。 */
-  font-family: var(--font-serif, "Source Han Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif);
+  font-family: var(--font-serif);
   font-size: 18px;
   line-height: 1.8;
   resize: none;
   outline: none;
   padding: 0;
-  letter-spacing: 0.3px;
+  letter-spacing: 0;
   /* 平滑字体渲染（抗锯齿 + 亚像素优化）*/
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

@@ -1923,7 +1923,7 @@ textarea.nn-input { resize: vertical; }
    用户可以分别点左/右侧边图标条展开对应面板 */
 .editor-layout {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) minmax(320px, 1fr);
+  grid-template-columns: 40px minmax(280px, 1fr) 5px minmax(280px, 1fr);
   grid-template-rows: auto 1fr 0;   /* 顶条auto(允许换行增高) / 主区1fr / 底栏0 */
   gap: 0;
   height: 100%;
@@ -1934,7 +1934,7 @@ textarea.nn-input { resize: vertical; }
 
 /* 焦点模式 (Ctrl+\): 全部隐藏, 正文100% */
 body.focus-mode .editor-layout {
-  grid-template-columns: 0 1fr 0;
+  grid-template-columns: 0 1fr 0 0;
 }
 body.focus-mode .editor-left,
 body.focus-mode .editor-right,
@@ -1942,16 +1942,16 @@ body.focus-mode .editor-bottom { display: none; }
 
 /* 紧凑模式 (ed-toggle-right): 右栏收起, 左栏保留图标条 */
 body.editor-compact .editor-layout {
-  grid-template-columns: 40px 1fr 0;
+  grid-template-columns: 40px 1fr 0 0;
 }
 body.editor-compact .editor-right { display: none; }
 
 /* 左侧面板展开态 (ed-left 内部按钮触发) */
 body.left-open .editor-layout {
-  grid-template-columns: 240px minmax(0, 1fr) minmax(320px, 1fr);
+  grid-template-columns: 240px minmax(280px, 1fr) 5px minmax(280px, 1fr);
 }
 body.editor-compact.left-open .editor-layout {
-  grid-template-columns: 240px 1fr 0;
+  grid-template-columns: 240px 1fr 0 0;
 }
 
 /* 右侧面板收折 (用户主动关闭) */
@@ -1984,7 +1984,7 @@ body.right-collapsed.focus-mode .editor-layout {
   position: relative;
 }
 .editor-right {
-  grid-row: 2; grid-column: 3;
+  grid-row: 2; grid-column: 4;
   background: var(--bg-glass);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur-webkit);
@@ -1992,6 +1992,29 @@ body.right-collapsed.focus-mode .editor-layout {
   box-shadow: var(--shadow-inner);
   display: flex; flex-direction: column;
   overflow: hidden;
+}
+/* 可拖拽分割条 */
+.ed-splitter {
+  grid-row: 2; grid-column: 3;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 5;
+}
+.ed-splitter::after {
+  content: "";
+  position: absolute;
+  left: 2px; top: 30%; bottom: 30%;
+  width: 1px;
+  background: var(--border);
+  transition: background 0.15s, width 0.15s, left 0.15s;
+  border-radius: 1px;
+}
+.ed-splitter:hover::after, .ed-splitter.dragging::after {
+  background: var(--accent);
+  width: 3px;
+  left: 1px;
 }
 .editor-bottom {
   grid-row: 3; grid-column: 1 / 4;

@@ -7783,6 +7783,58 @@ async function regenerateCurrentChapter() {
 
 // =================== 初始化 ===================
 window.addEventListener("DOMContentLoaded", () => {
+ // 可拖拽分割条：正文区 ↔ AI面板 宽度调整
+ const splitter = $("#ed-splitter");
+ if (splitter) {
+ let dragging = false;
+ const startDrag = (e) => {
+ dragging = true;
+ splitter.classList.add("dragging");
+ document.body.style.cursor = "col-resize";
+ document.body.style.userSelect = "none";
+ e.preventDefault();
+ };
+ splitter.addEventListener("mousedown", startDrag);
+ document.addEventListener("mousemove", (e) => {
+ if (!dragging) return;
+ const layout = document.querySelector(".editor-layout");
+ if (!layout) return;
+ const rect = layout.getBoundingClientRect();
+ const leftIcons = document.body.classList.contains("left-open") ? 240 : 40;
+ const splitterW = 5;
+ const availW = rect.width - leftIcons - splitterW;
+ const x = e.clientX - rect.left - leftIcons;
+ let pct = (x / availW) * 100;
+ pct = Math.max(20, Math.min(80, pct)); // 限制 20%-80%
+ layout.style.gridTemplateColumns = `${leftIcons}px ${pct.toFixed(1)}% ${splitterW}px ${(100-pct).toFixed(1)}%`;
+ });
+ const endDrag = () => {
+ if (!dragging) return;
+ dragging = false;
+ splitter.classList.remove("dragging");
+ document.body.style.cursor = "";
+ document.body.style.userSelect = "";
+ // 持久化比例
+ const layout = document.querySelector(".editor-layout");
+ if (layout) {
+ const m = getComputedStyle(layout).gridTemplateColumns.match(/[\d.]+%/);
+ if (m) try { localStorage.setItem("novelai:ed-split", m[0].replace("%","")); } catch(e){}
+ }
+ };
+ document.addEventListener("mouseup", endDrag);
+ // 恢复上次比例
+ try {
+ const saved = localStorage.getItem("novelai:ed-split");
+ if (saved) {
+ const layout = document.querySelector(".editor-layout");
+ const leftIcons = document.body.classList.contains("left-open") ? 240 : 40;
+ const pct = parseFloat(saved);
+ if (layout && pct >= 20 && pct <= 80) {
+ layout.style.gridTemplateColumns = `${leftIcons}px ${pct}% 5px ${(100-pct)}%`;
+ }
+ }
+ } catch(e) {}
+ }
  // 顶部按钮 (B-新156: 简化为 4 个: refresh / migrate / theme / focus / help)
  $("#btn-refresh").onclick = refreshAll;
  // B-新156: 兼容旧 #btn-regenerate / #btn-import 引用, 但已从顶栏移除
